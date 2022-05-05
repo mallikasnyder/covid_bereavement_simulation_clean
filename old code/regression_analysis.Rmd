@@ -1,0 +1,765 @@
+---
+title: 'Excess Bereavement and Excess Mortality: Some Analysis'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+In this document, I outline the process for analyzing the data derived from the analysis scripts and generating the quantities we need for the regression. 
+
+```{r message=FALSE, warning=FALSE}
+#Loading dependencies
+require(tidyverse)
+require(data.table)
+require(countrycode) #For labeling graphs
+require(stargazer)
+source("~/covid_simulation/Kin_death/01_load_functions.R")
+source('~/covid_simulation/Kin_death/functions_bereavement.R')
+```
+
+First, load the data.
+
+```{r}
+data <- get(load(file = "../Data/final_data_preprint.RData"))
+remove(data_preprint)
+```
+
+## Independent Variables
+
+### Excess Mortality
+The first question is how we define excess: we run simulations for two scenarios, one without Covid-related excess mortality and one with it. We then randomly match each Covid simulation for a country with a non-Covid simulation. Most definitions of excess mortality focus on the differences between observed and expected deaths (see, for example, Our World in Data's [page](https://ourworldindata.org/excess-mortality-covid)), and we calculate a ratio here (am I remembering this right?). Most quantities in this analysis will go from 0-100. Where number of deaths in a particular category are denoted by $D$,
+\begin{itemize}
+\item Level of above-15 excess mortality: 
+$$EM = 100 \times \frac{D_{15+, Covid} - D_{15+, Counterfactual}}{D_{15+, Counterfactual}}$$
+\item Age ratio for above-15 excess mortality: 
+\par
+What share of excess deaths come from the age 65+ category:
+
+$$Share_{65+} = 100 \times \frac{D_{65+, Covid} - D_{65+, Counterfactual}}{D_{15+, Covid} - D_{15+, Counterfactual}}$$ 
+
+\item Sex ratio for above-15 excess mortality:
+Here, we measure the ratio of excess deaths for men to excess deaths for women.
+$$Share_{Male} = 100 \times \frac{D_{15+, Covid, Male} - D_{15+, Counterfactual, Male}}{D_{15+, Covid, Both} - D_{15+, Counterfactual, Both}}$$
+\end{itemize}
+
+We can calculate these quantities as follows:
+
+```{r}
+#Match Covid and counterfactual simulations, and clean data
+death_rates <- data$death_rates %>%
+  filter(!is.na(scenario)) %>% 
+  mutate(sex = ifelse(fem == 1, "F", "M")) %>%
+  ungroup() %>%
+  group_by(country, scenario, sex, age) %>%
+  mutate(index = row_number(), fem = NULL) %>%
+  filter(index <= 99) %>% #Temporary solution for addressing matching issue
+  ungroup() %>%
+  pivot_wider(id_cols = c("country", "sex", "age", "index"), 
+              names_from = "scenario", 
+              values_from = c("n_num", "n_den", "value", "sim.id"))
+```
+
+```{r}
+#Excess mortality level
+em_level <- death_rates %>%
+  filter(age %in% c("15-29", "30-44", "45-64", "65+")) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other) %>%
+  summarize(deaths_covid = sum(n_num_covid, na.rm = T), 
+            deaths_other = sum(n_num_other, na.rm = T)) %>%
+  mutate(em_level = 100*(deaths_covid - deaths_other)/(deaths_other),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c'))
+
+#Get the distribution of this by country and plot it
+em_level %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = em_level)) + 
+  labs(x = "Country", y = "Level of Excess Mortality") +
+  theme(axis.text.x = element_text(size = 7))
+
+#Summarize it
+em_level %>%
+  ungroup() %>%
+  group_by(country) %>%
+  
+  summarize(mean_em_level = mean(em_level, na.rm = T))
+```
+
+```{r}
+#Age ratio of excess mortality
+em_age <- death_rates %>%
+  filter(age %in% c("15-29", "30-44", "45-64", "65+")) %>%
+  mutate(above65 = if_else(age %in% c("65+"), "65plus", "below65")) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other, above65) %>%
+  summarize(deaths_covid = sum(n_num_covid, na.rm = T), 
+            deaths_other = sum(n_num_other, na.rm = T)) %>%
+  pivot_wider(names_from = "above65", values_from = c("deaths_covid", "deaths_other")) %>%
+  mutate(em_share_age = 100*(deaths_covid_65plus - deaths_other_65plus)/(deaths_covid_below65+deaths_covid_65plus - deaths_other_below65 - deaths_other_65plus),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c'))
+
+#Graph this
+em_age %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = em_share_age)) + 
+  labs(x = "Country", y = "65+ Share of Excess Mortality") +
+  theme(axis.text.x = element_text(size = 7))
+```
+
+```{r}
+#Sex ratio of excess mortality
+em_sexratio <- death_rates %>%
+  filter(age %in% c("15-29", "30-44", "45-64", "65+")) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other, sex) %>%
+  summarize(deaths_covid = sum(n_num_covid, na.rm = T), 
+            deaths_other = sum(n_num_other, na.rm = T)) %>%
+  pivot_wider(names_from = "sex", values_from = c("deaths_covid", "deaths_other")) %>%
+  mutate(em_sexratio = 100*(deaths_covid_M - deaths_other_M)/(deaths_covid_F + deaths_covid_M - deaths_other_F - deaths_other_M),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c'))
+
+#Graph this
+em_sexratio %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = em_sexratio)) + 
+  labs(x = "Country", y = "Male Share of Excess Mortality") +
+  theme(axis.text.x = element_text(size = 7))
+```
+QUESTION: We see a lot of fluctuation in the age ratio and sex ratio measures for excess mortality, because the numbers are quite low and in some cases the number of excess deaths will be in fact negative. Do you have any thoughts on whether this is an issue? Should we be defining these quantities differently?
+
+### Population Structure
+
+We can calculate these quantities from the death rates object as well, using population exposures. One thing to note is that for each pair of simulations, we have two sets of exposures. Here, I simply average over the two cases, as this is pre-Covid-19 and unlikely to affect the results. 
+
+\begin{itemize}
+\item Level of population
+\par
+This is calculated as the sum of all population exposures. I calculate it based on all individuals. I also plot UNWPP populations for each of the countries (we will use the UNWPP populations as a covariate, not SOCSIM populations.) According to their documentation, UNWPP exclude dependencies.
+
+QUESTION: Should these ratios be shares as well? Or is that not necessary? I think it might be fine to leave them as is, as they are standard demographic quantities, but I'm trying to remember what we agreed on. For now I've calculated
+
+\item Share of population above 15 that is 65+:
+\par
+This is calculated as a share, where N is the number of individuals in a particular category 
+$$Share_{65+} = 100 \times \frac{N_{65+}}{N_{15+}}$$
+\item Share of population above 15 that is female:
+\par
+Similarly, this is a share, 
+$$Share_{Male} = 100 \times \frac{N_{Male}}{N_{Female}+N_{Male}}$$
+\end{itemize}
+
+I use the same death_rates object from previously to calculate these quantities.
+
+```{r}
+#Calculating size of population
+pop_size <- death_rates %>%
+  filter(age == "all_sum") %>% #This previously summed up population exposures
+  mutate(pop_size = (n_den_covid+n_den_other)/2) %>%
+  select(c(country, index, sim.id_covid, sim.id_other, pop_size))
+
+#Graph these results
+pop_size %>%
+ mutate(ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c')) %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = pop_size)) + 
+  labs(x = "Country", y = "Population Size: SOCSIM") +
+  theme(axis.text.x = element_text(size = 7))
+```
+
+```{r}
+#Plot UNWPP populations by country
+countrylist <- death_rates %>%
+  mutate(ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c')) %>%
+  pull(ccode)
+
+countrylist <- unique(countrylist)
+
+#Load UNWPP data
+unwpp_data <- fread("https://population.un.org/wpp/Download/Files/1_Indicators%20(Standard)/CSV_FILES/WPP2019_TotalPopulationBySex.csv")
+```
+
+```{r message=FALSE, warning=FALSE}
+#Modify and filter data
+unwpp_pop <- unwpp_data %>%
+  filter(Time == 2019 & Variant == "Medium") %>%
+  mutate(ccode = countrycode(Location, origin = 'country.name', destination = 'iso3c'),
+           unwpp_pop = PopTotal) %>%
+  filter(ccode %in% countrylist & Location %in% grep(pattern = "dependencies", x = Location, invert = T, value = T)) %>%
+  select(ccode, unwpp_pop)
+
+unwpp_pop %>%
+  ggplot() + geom_point(aes(x = ccode, y = unwpp_pop)) + 
+  labs(x = "Country", y = "Population Size: UNWPP 2019") +
+  theme(axis.text.x = element_text(size = 7))
+  
+```
+
+
+```{r}
+#Calculate above-15 age ratios
+pop_ageratio <- death_rates %>%
+  filter(age %in% c("15-29", "30-44", "45-64", "65+")) %>%
+  mutate(above65 = if_else(age %in% c("65+"), "65plus", "below65")) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other, above65) %>%
+  summarize(pop_covid = sum(n_den_covid, na.rm = T), 
+            pop_other = sum(n_den_other, na.rm = T)) %>%
+  mutate(pop_total = (pop_covid + pop_other)/2) %>%
+  select(-c(pop_covid, pop_other)) %>%
+  pivot_wider(names_from = "above65", names_prefix = "pop", values_from = "pop_total") %>%
+  mutate(pop_ageratio = 100*(pop65plus/(pop65plus + popbelow65))) %>%
+  select(-c(pop65plus, popbelow65))
+
+
+#Graph these by country
+pop_ageratio %>%
+ mutate(ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c')) %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = pop_ageratio)) + 
+  labs(x = "Country", y = "65+ Share of Population aged 15+") +
+  theme(axis.text.x = element_text(size = 7))
+```
+
+```{r}
+#Calculate above-15 sex ratio
+pop_sexratio <- death_rates %>%
+  filter(age %in% c("15-29", "30-44", "45-64", "65+")) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other, sex) %>%
+  summarize(pop_covid = sum(n_den_covid, na.rm = T), 
+            pop_other = sum(n_den_other, na.rm = T)) %>%
+  mutate(pop_total = (pop_covid + pop_other)/2) %>%
+  select(-c(pop_covid, pop_other)) %>%
+  pivot_wider(names_from = "sex", names_prefix = "pop", values_from = "pop_total") %>%
+  mutate(pop_sexratio = 100*(popM/(popF+popM)),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c')) %>%
+  select(-c(popM, popF))
+
+
+#Graph these by country
+pop_sexratio %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = pop_sexratio)) + 
+  labs(x = "Country", y = "Male Share of 15+ Population") +
+  theme(axis.text.x = element_text(size = 7))
+```
+
+
+### Kinship Structure
+
+\begin{itemize}
+\item Size of family
+\par
+I measure this as the average size of the nuclear family for individuals above 15 (due to data issues) for the average ego alive at the start of the period.
+Think about the next two quantities (not calculated for now):
+\item Age ratio of relatives
+This is the share of kin above 65+ to kin above 15 for the extended family.
+\item Sex ratio of relatives
+This is the share of male kin above age 15 of total kin above age 15 for the extended family.
+\end{itemize}
+We calculate this using the kin_ratio object.
+
+
+```{r}
+#Match Covid and counterfactual simulations, and clean data
+kin_ratio <- data$kin_ratio %>%
+  filter(!is.na(scenario)) %>% 
+  mutate(sex = ifelse(grepl("f1", category), "F", "M"),
+  age = gsub("f[0-1]{1}", "", category),
+  category = NULL) %>%
+  ungroup() %>%
+  filter(kintype == "nuclear") %>%
+  complete(age, nesting(country, scenario, sim.id, sex, kintype)) %>%
+  group_by(country, scenario, sex, age) %>%
+  mutate(index = row_number()) %>%
+  filter(index <= 99) %>% #Temporary solution for addressing matching issue
+  ungroup() %>%
+  pivot_wider(id_cols = c("country", "sex", "age", "index"), 
+              names_from = "scenario", 
+              values_from = c("count_all", "count_female", "count_male", "count_65plus", "count_below65", "n_egos", "sim.id"))
+```
+
+```{r}
+#Size of family
+kin_size <- kin_ratio %>%
+  mutate(count_all_ages_covid = count_all_covid*n_egos_covid,
+         count_all_ages_other = count_all_other*n_egos_other) %>% group_by(country, index, sim.id_covid, sim.id_other) %>%
+  summarize(n_egos_covid = sum(n_egos_covid, na.rm = T),
+            n_egos_other = sum(n_egos_other, na.rm = T),
+            n_kin_covid = sum(count_all_ages_covid, na.rm=T)/n_egos_covid, 
+            n_kin_other = sum(count_all_ages_other, na.rm =T)/n_egos_other) %>%
+  mutate(kin_size = (n_kin_covid + n_kin_other)/2,
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c')) %>%
+  select(country, ccode, index, sim.id_covid, sim.id_other, kin_size)
+
+#Graph this
+kin_size %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = kin_size)) + 
+  labs(x = "Country", y = "Average Size of Nuclear Family") +
+  theme(axis.text.x = element_text(size = 7))
+```
+
+Note: I think the age ratio quantity will be heavily weighted towards older ages, which it seems to be here, based on which kin we include in our calculations. 
+
+```{r, eval = F}
+#Age ratio for kin
+kin_ageratio <- kin_ratio %>%
+  mutate(count_65plus_covid = count_65plus_covid*n_egos_covid,
+         count_65plus_other = count_65plus_other*n_egos_other,
+         count_below65_covid = count_below65_covid*n_egos_covid,
+         count_below65_other= count_below65_other*n_egos_other) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other) %>%
+  summarize(n_egos_covid = sum(n_egos_covid, na.rm = T),
+            n_egos_other = sum(n_egos_other, na.rm = T),
+            n_kin_65plus_covid = sum(count_65plus_covid, na.rm=T)/n_egos_covid, 
+            n_kin_65plus_other = sum(count_65plus_other, na.rm=T)/n_egos_other,
+            n_kin_below65_covid = sum(count_below65_covid, na.rm=T)/n_egos_covid,
+            n_kin_below65_other = sum(count_below65_other, na.rm=T)/n_egos_other) %>%
+  mutate(kin_65plus = (n_kin_65plus_covid + n_kin_65plus_other)/2,
+         kin_below65 = (n_kin_below65_covid + n_kin_below65_other)/2,
+         kin_ageratio = 100*(kin_65plus/(kin_below65 + kin_65plus)),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c')) %>%
+  select(country, ccode, index, sim.id_covid, sim.id_other, kin_ageratio)
+
+#Graph this
+kin_ageratio %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = kin_ageratio)) + 
+  labs(x = "Country", y = "Share of Extended Kin Aged 65+") +
+  theme(axis.text.x = element_text(size = 7))
+```
+
+```{r, eval = F}
+#Sex ratio for kin
+kin_sexratio <- kin_ratio %>%
+  mutate(count_female_covid = count_female_covid*n_egos_covid,
+         count_female_other = count_female_other*n_egos_other,
+         count_male_covid = count_male_covid*n_egos_covid,
+         count_male_other= count_male_other*n_egos_other) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other) %>%
+  summarize(n_egos_covid = sum(n_egos_covid, na.rm = T),
+            n_egos_other = sum(n_egos_other, na.rm = T),
+            n_kin_female_covid = sum(count_female_covid, na.rm=T)/n_egos_covid, 
+            n_kin_female_other = sum(count_female_other, na.rm=T)/n_egos_other,
+            n_kin_male_covid = sum(count_male_covid, na.rm=T)/n_egos_covid,
+            n_kin_male_other = sum(count_male_other, na.rm=T)/n_egos_other) %>%
+  mutate(kin_female = (n_kin_female_covid + n_kin_female_other)/2,
+         kin_male = (n_kin_male_covid + n_kin_male_other)/2,
+         kin_sexratio = 100*(kin_male/(kin_female + kin_male)),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c')) %>%
+  select(country, ccode, index, sim.id_covid, sim.id_other, kin_sexratio)
+
+#Graph this
+kin_sexratio %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = kin_sexratio)) + 
+  labs(x = "Country", y = "Male Share of Extended Kin") +
+  theme(axis.text.x = element_text(size = 7))
+```
+
+## Dependent Variable: Excess Bereavement
+
+There are different ways of calculating excess bereavement. Here, we use a relative difference consistent with what we did for excess mortality. One definition that seems fairly consistent with excess mortality is to look at bereavement across the two different scenarios, where bereavement is measured as the difference in mean kin counts for individuals with at least one kin member of a certain type at the start of the period. Here, I define the excess bereavement, where K represents the average number of kin surviving for an ego with at least one relative alive at the start of the period, as follows:
+
+$$EBR = \frac{(K_{pre,Covid} - K_{post, Covid}) - (K_{pre,Counterfactual} - K_{post, Counterfactual})}{(K_{pre,Counterfactual} - K_{post, Counterfactual}) }$$
+One thing we talked about a bit in some of the early work around the paper was the probability of losing a type of relative; I don't think that's what we're really measuring here, so we may need some alternative analysis to get at that. QUESTION: Am I remembering our discussion on this quantity correctly?
+
+I load the kin_bb object, which is used for calculating excess bereavement. One big question is what level we want this data to be at. For now I have these numbers calculated individually for each age-sex category and kin type for each simulation (which will facilitate regression analysis later by either ego characteristics/type of kin). Later for the table, though, I think I will need to aggregate across age categories to address all the NA values.
+
+```{r}
+#Calculate excess bereavement rates
+kin_ebr <-data$kin_bb %>%
+  filter(!is.na(scenario)) %>% 
+  mutate(sex = ifelse(grepl("f1", category), "F", "M"),
+    age = gsub("f[0-1]{1}", "", category),
+    category = NULL) %>%
+  ungroup() %>%
+  complete(age, nesting(country, scenario, sim.id, sex, kintype)) %>%
+  group_by(country, scenario, sex, age, kintype) %>%
+  mutate(index = row_number(), category = NULL) %>%
+  filter(index <= 99) %>% #Temporary solution for addressing matching issue
+  ungroup() %>%
+  pivot_wider(id_cols = c("country", "sex", "age", "kintype", "index"), 
+              names_from = "scenario", 
+              values_from = c("mean_pre_with", "sd_pre_with", "n_withkin", 
+                              "mean_post_with", "sd_post_with", "sim.id", "n_losekin", "n_total")) %>%
+  mutate(bereavement_covid = (mean_pre_with_covid - mean_post_with_covid),
+         bereavement_other = (mean_pre_with_other - mean_post_with_other),
+         n_withkin = (n_withkin_covid + n_withkin_other)/2,
+         ebr = 100*(bereavement_covid)/(bereavement_other),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c'))
+```
+
+Here, I create an aggregated version of this dataset, aggregating across age and sex by kin type and simulation. This is useful because otherwise we have a large number of NA values (eg. no children for 0-14, etc.). This creates issues with the regression, and also prevents kin losses from being weighted appropriately by the number of egos actually in a category.
+
+```{r}
+kin_ebr_kintype <- kin_ebr %>%
+  ungroup %>%
+  mutate(sum_kin_loss_covid = bereavement_covid*n_withkin,
+         sum_kin_loss_other = bereavement_other*n_withkin) %>%
+  group_by(country, ccode, sim.id_covid, sim.id_other, kintype) %>%
+  summarize(sum_bereavement_covid = sum(sum_kin_loss_covid, na.rm = T),
+            sum_bereavement_other = sum(sum_kin_loss_other, na.rm = T),
+            n_total = sum(n_withkin, na.rm = T),
+            mean_bereavement_covid = sum_bereavement_covid/n_total,
+            mean_bereavement_other = sum_bereavement_other/n_total) %>%
+  mutate(ebr = 100*(mean_bereavement_covid - mean_bereavement_other)/mean_bereavement_other)
+```
+
+```{r}
+#Graph an example
+kin_ebr_kintype %>%
+  filter(kintype == "gparents") %>%
+  ggplot() + geom_boxplot(aes(x = ccode, y = ebr)) + 
+  labs(x = "Country", y = "Excess Bereavement Rate of Grandparents") +
+  theme(axis.text.x = element_text(size = 7))
+
+kin_ebr_kintype %>%
+  filter(kintype == "gparents") %>%
+  ungroup() %>%
+  group_by(country) %>%
+  summarize(mean_ebr = mean(ebr, na.rm = T))
+
+```
+
+
+## Preparing the Dataset for Regression Analysis
+
+Now, we can combine the various objects generated previously to create a dataset used in our regression analysis. 
+
+```{r}
+#Merge data objects by category
+em_data <- merge(em_sexratio, merge(em_level, em_age))
+pop_data <- merge(unwpp_pop, merge(pop_sexratio, pop_ageratio))
+#kin_data <- merge(kin_sexratio, merge(kin_size, kin_ageratio))
+kin_data <- kin_size
+```
+
+```{r}
+#And get a tibble of covariates
+covariates <- merge(kin_data, merge(pop_data, em_data))
+```
+
+```{r}
+#Now merge with the dependent variable
+tabledata_kintype <- merge(covariates, kin_ebr_kintype)
+```
+
+## Regression Tables
+
+```{r}
+#A quick and clumsy way to get rid of the cases where we divide by 0--mostly an issue for great grandparents
+tabledata_kintype <- tabledata_kintype %>%
+  filter_all(all_vars(!is.infinite(.)))
+```
+
+Now, I fit a number of different regression models, by different types of kin.
+
+```{r}
+nuclear_basic <- lm(ebr~em_level + country, subset = (kintype == "nuclear"), data = tabledata_kintype, na.action = na.omit)
+
+nuclear_mort <- lm(ebr~em_level + country + em_share_age + em_sexratio, subset = (kintype == "nuclear"), data = tabledata_kintype , na.action = na.omit)
+
+nuclear_pop <- lm(ebr~em_level + country + em_share_age + em_sexratio + unwpp_pop + pop_ageratio + pop_sexratio, subset = (kintype == "nuclear"), data = tabledata_kintype, na.action = na.omit)
+
+nuclear_kinstructure <- lm(ebr~em_level + country + em_share_age + em_sexratio + unwpp_pop + pop_ageratio + pop_sexratio + kin_size, subset = (kintype == "nuclear"), data = tabledata_kintype, na.action = na.omit)
+```
+
+```{r, results='asis', warning=FALSE}
+stargazer(nuclear_basic, nuclear_mort, nuclear_pop, nuclear_kinstructure, column.labels = c("Basic", "+Mortality", "+Population", "+Kinship Structure"), type = "html", title = "Nuclear Family")
+```
+
+```{r}
+gparents_basic <- lm(ebr~em_level + country, subset = (kintype == "gparents"), data = tabledata_kintype, na.action = na.omit)
+
+gparents_mort <- lm(ebr~em_level + country + em_share_age + em_sexratio, subset = (kintype == "gparents"), data = tabledata_kintype , na.action = na.omit)
+
+gparents_pop <- lm(ebr~em_level + country + em_share_age + em_sexratio + unwpp_pop + pop_ageratio + pop_sexratio, subset = (kintype == "gparents"), data = tabledata_kintype, na.action = na.omit)
+
+gparents_kinstructure <- lm(ebr~em_level + country + em_share_age + em_sexratio + unwpp_pop + pop_ageratio + pop_sexratio + kin_size, subset = (kintype == "gparents"), data = tabledata_kintype, na.action = na.omit)
+```
+
+```{r, results='asis', warning=FALSE}
+stargazer(gparents_basic, gparents_mort, gparents_pop, gparents_kinstructure, column.labels = c("Basic", "+Mortality", "+Population", "+Kinship Structure"), type = "html", title = "Grandparents")
+```
+
+```{r}
+children_basic <- lm(ebr~em_level + country, subset = (kintype == "children"), data = tabledata_kintype, na.action = na.omit)
+
+children_mort <- lm(ebr~em_level + country + em_share_age + em_sexratio, subset = (kintype == "children"), data = tabledata_kintype , na.action = na.omit)
+
+children_pop <- lm(ebr~em_level + country + em_share_age + em_sexratio + unwpp_pop + pop_ageratio + pop_sexratio, subset = (kintype == "children"), data = tabledata_kintype, na.action = na.omit)
+
+children_kinstructure <- lm(ebr~em_level + country + em_share_age + em_sexratio + unwpp_pop + pop_ageratio + pop_sexratio + kin_size, subset = (kintype == "children"), data = tabledata_kintype, na.action = na.omit)
+```
+
+```{r, results='asis', warning=FALSE}
+stargazer(children_basic, children_mort, children_pop, children_kinstructure, column.labels = c("Basic", "+Mortality", "+Population", "+Kinship Structure"), type = "html", title = "Children")
+```
+
+```{r warning=FALSE, results='asis'}
+stargazer(nuclear_kinstructure, gparents_kinstructure, children_kinstructure, column.labels = c("Nuclear", "Grandparents", "Children"), omit = "country", type = "html", title = "Different Types of Kin")
+```
+
+
+## Other Analysis: Probability of Losing Kin
+
+Another interesting concept to explore is changes in the probability of losing kin. A measure I use a lot here is absolute difference in the probability of losing kin across the two simulation scenarios (I have also considered relative, although it is a little problematic for a few noisy estimates for which absolute magnitudes are very low but relative difference is high.) The current measure represents a percentage point change, which seems fairly straightforward to me. 
+
+```{r}
+kin_probs <- kin_ebr %>%
+  mutate(n_losekin = (n_losekin_covid+n_losekin_other)/2,
+         n_total = (n_total_covid + n_total_other)/2,
+         pc_withkin = (n_withkin/n_total)*100,
+         pc_losekin = 100*(n_losekin/n_withkin))
+```
+
+EBR
+
+```{r}
+#Visualize the distribution of kin 
+kin_probs %>%
+  ungroup() %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T),
+            bereavement_covid = mean(bereavement_covid, na.rm = T),
+            bereavement_other = mean(bereavement_other, na.rm = T),
+            bereavement_abs_diff = bereavement_covid - bereavement_other) %>%
+  filter(pc_withkin > 1) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = bereavement_abs_diff, fill = age), position = "dodge", stat = "identity") + labs(title = "EBR by Age")
+```
+
+
+
+```{r}
+#Visualize the distribution of kin 
+kin_probs %>%
+  ungroup() %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T)) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = n_withkin, fill = age), position = "dodge", stat = "identity") + labs(title = "Individuals with Kin by Age")
+```
+
+
+
+```{r}
+#Visualize the distribution of kin 
+kin_probs %>%
+  ungroup() %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T)) %>%
+  filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = pc_withkin, fill = age), position = "dodge", stat = "identity") + labs(title = "% Individuals with Kin by Age")
+```
+
+```{r}
+#Visualize the distribution of kin by country
+kin_probs %>%
+  ungroup() %>%
+  group_by(ccode, kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T)) %>%
+  #filter(kintype == "gparents") %>%
+  ggplot() + geom_bar(aes(x = ccode, y = pc_withkin, fill = age), position = "stack", stat = "identity") + labs(title = "% Individuals with Kin by Age and Country") + facet_wrap(~kintype)
+```
+```{r}
+prob_loss_age <- kin_probs %>%
+  ungroup() %>%
+  filter(pc_withkin > 1) %>%
+  group_by(kintype, sex, age) %>%
+  summarize(n_withkin_covid = mean(n_withkin_covid, na.rm = T),
+            n_withkin_other = mean(n_withkin_other, na.rm = T),
+            n_losekin_covid = mean(n_losekin_covid, na.rm = T),
+            n_losekin_other = mean(n_losekin_other, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T)) %>%
+  mutate(probloss_covid = 100*(n_losekin_covid/n_withkin_covid),
+         probloss_other = 100*(n_losekin_other/n_withkin_other),
+         probloss_rel_diff = 100*(probloss_covid - probloss_other)/probloss_other,
+         probloss_abs_diff = probloss_covid - probloss_other)
+```
+
+```{r}
+prob_loss_age %>%
+  ggplot() + geom_bar(aes(x = kintype, y = probloss_abs_diff, fill = age), position = "dodge", stat = "identity") + labs(title = "Absolute difference in Loss Probability by Type of Kin and Age")
+```
+```{r}
+prob_loss_age %>%
+  ggplot() + geom_bar(aes(x = kintype, y = pc_withkin*probloss_abs_diff/100, fill = age), position = "dodge", stat = "identity") + labs(title = "Absolute difference in Loss Probability by Type of Kin and Age")
+```
+
+```{r}
+prob_loss_age <- kin_probs %>%
+  ungroup() %>%
+  filter(pc_withkin > 1) %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin_covid = mean(n_withkin_covid, na.rm = T),
+            n_withkin_other = mean(n_withkin_other, na.rm = T),
+            n_losekin_covid = mean(n_losekin_covid, na.rm = T),
+            n_losekin_other = mean(n_losekin_other, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T)) %>%
+  mutate(probloss_covid = 100*(n_losekin_covid/n_withkin_covid),
+         probloss_other = 100*(n_losekin_other/n_withkin_other),
+         probloss_rel_diff = 100*(probloss_covid - probloss_other)/probloss_other,
+         probloss_abs_diff = probloss_covid - probloss_other)
+```
+
+```{r}
+prob_loss_age %>%
+  ggplot() + geom_bar(aes(x = kintype, y = probloss_abs_diff, fill = age), position = "dodge", stat = "identity") + labs(title = "Absolute difference in Loss Probability by Type of Kin and Age")
+```
+```{r}
+#By country
+prob_loss_country <- kin_probs %>%
+  ungroup() %>%
+  filter(pc_withkin > 1) %>%
+  group_by(ccode, country, kintype, age) %>%
+  summarize(n_withkin_covid = mean(n_withkin_covid, na.rm = T),
+            n_withkin_other = mean(n_withkin_other, na.rm = T),
+            n_losekin_covid = mean(n_losekin_covid, na.rm = T),
+            n_losekin_other = mean(n_losekin_other, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T)) %>%
+  mutate(probloss_covid = 100*(n_losekin_covid/n_withkin_covid),
+         probloss_other = 100*(n_losekin_other/n_withkin_other),
+         probloss_rel_diff = 100*(probloss_covid - probloss_other)/probloss_other,
+         probloss_abs_diff = probloss_covid - probloss_other)
+```
+
+```{r}
+prob_loss_country %>%
+  filter(kintype == "gparents") %>%
+  ggplot() + geom_bar(aes(x = ccode, y = pc_withkin*probloss_abs_diff, fill = age), position = "dodge", stat = "identity") + labs(title = "Absolute Diff in Loss Probability of Grandparents by Country and Age")
+```
+```{r}
+prob_loss_country %>%
+  filter(kintype == "parents") %>%
+  ggplot() + geom_bar(aes(x = ccode, y = probloss_abs_diff, fill = age), position = "stack", stat = "identity") + labs(title = "Absolute Diff in Loss Probability of Parents by Country and Age")
+```
+```{r}
+prob_loss_country %>%
+  filter(kintype == "spouse") %>%
+  ggplot() + geom_bar(aes(x = ccode, y = probloss_abs_diff, fill = age), position = "stack", stat = "identity") + labs(title = "Absolute Diff in Loss Probability of Spouse by Country and Age")
+```
+
+```{r}
+prob_loss_country %>%
+  filter(kintype == "children") %>%
+  ggplot() + geom_bar(aes(x = ccode, y = probloss_abs_diff, fill = age), position = "stack", stat = "identity") + labs(title = "Absolute Diff in Loss Probability of Children by Country and Age")
+```
+
+## Plots for Presentation
+
+Distribution of kin
+
+```{r}
+#Visualize the distribution of kin 
+kin_probs %>%
+  ungroup() %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T)) %>%
+  filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = pc_withkin, fill = age), position = "dodge", stat = "identity") + labs(x = "Type of Kin", y = "% with at least one relative in Feb 2020", title = "% Individuals with Kin by Age", fill = "Age Group") + 
+  theme_bw()
+```
+
+Probability of Loss
+
+```{r}
+prob_loss_age %>%
+    filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = pc_withkin*probloss_abs_diff/100, fill = age), position = "dodge", stat = "identity") + labs(title = "Difference in Probability of Loss", y = "% Point Diff. in Probability For all Individuals", x = "Type of Kin", fill = "Age Group") + theme_bw()
+```
+
+Expected Excess Bereavement
+
+```{r}
+#Visualize the difference in expected kin
+kin_probs %>%
+  ungroup() %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T),
+            bereavement_covid = mean(bereavement_covid, na.rm = T),
+            bereavement_other = mean(bereavement_other, na.rm = T),
+            bereavement_abs_diff = bereavement_covid - bereavement_other) %>%
+  filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) %>%
+  filter(pc_withkin > 1) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = bereavement_abs_diff, fill = age), position = "dodge", stat = "identity") + labs(title = "Difference in Average Number of Kin Lost", y = "Diff. for those with one relative in Feb 2020", x = "Type of Kin", fill = "Age Group") + 
+  theme_bw()
+```
+Country Level
+```{r}
+em_country <- em_level %>%
+  group_by(country, ccode) %>%
+  summarize(em_level = mean(em_level, na.rm = T))
+
+prob_loss_country_sum <- kin_probs %>%
+  ungroup() %>%
+  filter(pc_withkin > 1) %>%
+  group_by(ccode, country, kintype) %>%
+  summarize(n_withkin_covid = mean(n_withkin_covid, na.rm = T),
+            n_withkin_other = mean(n_withkin_other, na.rm = T),
+            n_losekin_covid = mean(n_losekin_covid, na.rm = T),
+            n_losekin_other = mean(n_losekin_other, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            bereavement_covid = mean(bereavement_covid, na.rm = T),
+            bereavement_other = mean(bereavement_other, na.rm = T),
+            bereavement_abs_diff = bereavement_covid - bereavement_other) %>%
+  mutate(probloss_covid = 100*(n_losekin_covid/n_withkin_covid),
+         probloss_other = 100*(n_losekin_other/n_withkin_other),
+         probloss_rel_diff = 100*(probloss_covid - probloss_other)/probloss_other,
+         probloss_abs_diff = probloss_covid - probloss_other)
+
+pop_ageratio_country <- pop_ageratio %>%
+  ungroup() %>%
+  group_by(country) %>%
+  summarize(pop_ageratio = mean(pop_ageratio, na.rm = T))
+  
+
+figuredata <- merge(pop_ageratio_country, merge(em_country, prob_loss_country_sum))
+```
+
+
+```{r message=FALSE, warning=FALSE}
+figuredata %>%
+  filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) %>%
+  ggplot(aes(x = em_level, y = probloss_abs_diff)) + geom_point() + geom_smooth(method = "lm", se = F) + facet_wrap(~kintype) + 
+  labs(title = "Excess Mortality and Excess Kin Loss by Country", y = "Abs. Diff in Probability of Lost", x = "Excess Mortality, Ages 15+ (%)") + theme_bw()
+```
+
+

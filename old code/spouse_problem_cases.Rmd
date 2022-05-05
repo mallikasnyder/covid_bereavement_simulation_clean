@@ -1,0 +1,117 @@
+---
+title: "Identifying problem cases with spouses and fixing code"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+#Load functions
+#Source functions and packages
+source("~/covid_simulation/Kin_death/01_load_functions.R")
+source('~/covid_simulation/Kin_death/functions_bereavement.R')
+
+#Load an example simulation with this problem
+load("~/90days/covidRESULTS/SocCovid-mallikasnyder/Australia:Medium.sup/393944/SimResults/sims.Rsave")
+```
+
+```{r}
+#Feb 2020
+feb2020 <- 3241
+
+#Function parameters for asYr()
+FinalSimYear <- 2035 #Are these correct? #The first month is 0, the last month is 3240
+#It makes sense we have one extra month in 2035, since our first month (month 1) is actually a February
+endmo <- 3420
+  
+#Parameters for the add2opop2 and death rate functions
+age_br_months <- c(0, 14, 29, 44, 64, Inf)*12
+age_labs <- c("0-14", "15-29", "30-44", "45-64", "65+")
+
+```
+
+
+```{r}
+#Running some of the code we run in our function
+  
+  #Adding opop to omar
+  opop <- add2opop2(FinalSimYear = FinalSimYear, endmo = endmo, 
+                    feb2020 = feb2020, age_br_months = age_br_months, age_labs = age_labs,
+                    opop = sims$opop, omar = sims$omar)
+  
+  #Filtering out columns we don't need
+  opop <- opop[, -which(names(opop) %in% 
+                          c("group", "nev", "nesibm", "nesibp", 
+                            "lborn", "marid", "mstat", "fmult"))]
+  
+  #Filtering to only individuals born before or in February 2020: this is month 3241
+  #I found that by taking the second unique value of dates of birth for individuals in the 2020 birth cohort
+  opop <- opop[opop$dob <= feb2020,] #do we want to filter on dod (& opop$dod > feb2020)? Put minimum limit on dob as well
+  
+  #Filtering cohorts pre-1800: we may want to reconsider this
+  opop <- opop[opop$cohort >= 1800,]
+  
+  #Filter to individuals who die at or after 3241
+  opop <- opop[opop$dod >= feb2020,]
+```
+
+```{r}
+#Finding the problem case
+opop %>%
+  filter(agefeb2020_gr == "0-14", !is.na(spouse))
+```
+
+```{r}
+#This marriage seems to have begun when the individual was even younger
+sims$omar %>%
+  filter(hpid == "139774")
+```
+
+```{r}
+#The female partner is not identified as being married, however (this is probably a case of remarriage)
+opop %>%
+  filter(pid == "135058")
+```
+
+Question 1: Is there any reason why this might be happening?
+\par
+While I am still unsure why this marriage would occur, the second part, why the female partner was not identified, seems clearer. This is the line of code:
+
+```
+  opop$spouse<-ifelse(omar[zna(opop$marid), "dstart"] <= feb2020 & 
+                        omar[zna(opop$marid), "dend"] >= feb2020, 
+                           ifelse(opop$fem,
+                      (omar[zna(opop$marid),"hpid"]),
+                      (omar[zna(opop$marid),"wpid"])), NA)
+  
+```
+We can see that it would not, unfortunately, account for remarriages. Question 2: does this fix look suitable?
+\par
+Filter to all marriages that span the Feb 2020 period:
+
+```{r}
+omar2 <- sims$omar %>% filter(dstart <= feb2020 & dend >=feb2020)
+```
+
+This is not the most elegant approach, do you have any thoughts on how to avoid having to split the dataframe? I tried using an if_else statement, but it affected the position-based indexing that we use later.
+
+```{r}
+opop_fem <- opop %>% filter(fem == 1)
+opop_male <- opop %>% filter(fem == 0)
+opop_fem$spouse <- omar2$hpid[match(opop_fem$pid, omar2$wpid)]
+opop_male$spouse <- omar2$wpid[match(opop_male$pid, omar2$hpid)]
+
+opop2 <- bind_rows(opop_fem, opop_male)
+```
+
+
+```{r}
+#Finding the problem case, which is still present
+opop2 %>%
+  filter(agefeb2020_gr == "0-14", !is.na(spouse))
+
+#Now, however, we have the spouse correctly identified as well
+opop2 %>%
+  filter(spouse == "139774")
+```
+

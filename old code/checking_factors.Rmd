@@ -1,0 +1,38 @@
+---
+title: "Checking New STMF Factors"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r message=FALSE, warning=FALSE}
+#Load dependencies
+require(tidyverse)
+require(data.table)
+require(splitstackshape)
+require(countrycode)
+```
+
+```{r}
+'%ni%' <- Negate('%in%')
+setwd("~/covid_simulation")
+source("~/covid_simulation/Rcode/Make_STMF_factors.R")
+```
+
+Take a look at these factors in comparsion
+
+```{r}
+countries <- unique(factors.merged$country_name)
+
+lapply(1:length(countries), function(z) {
+  factors.merged %>%
+  filter(country_name == countries[z]) %>%
+  ggplot(aes(x = month)) + 
+  geom_line(aes(y = current_adj_factor, color = "Covid")) +
+  geom_line(aes(y = past_adj_factor, color = "Counterfactual")) +
+  facet_grid(rows = vars(age), cols = vars(sex)) + 
+  labs(x = "Month", y = "Factor", color = "Type", title = paste(countries[z], "Factors"))
+})
+```
+
+

@@ -1,0 +1,389 @@
+---
+title: 'Wittgenstein Centre Conference Graphs'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+In this document, I make the graphs we use for the VID presentation.
+
+```{r message=FALSE, warning=FALSE}
+#Loading dependencies
+require(tidyverse)
+require(data.table)
+require(countrycode) #For labeling graphs
+require(stargazer)
+source("~/covid_simulation/Kin_death/01_load_functions.R")
+source('~/covid_simulation/Kin_death/functions_bereavement.R')
+require(viridis)
+```
+
+
+## Kin distribution and loss graphs
+
+First, load the data.
+
+```{r}
+data <- get(load(file = "../Data/final_data_preprint.RData"))
+remove(data_preprint)
+```
+
+Calculate excess mortality:
+
+```{r}
+#Match Covid and counterfactual simulations, and clean data
+death_rates <- data$death_rates %>%
+  filter(!is.na(scenario)) %>% 
+  mutate(sex = ifelse(fem == 1, "F", "M")) %>%
+  ungroup() %>%
+  group_by(country, scenario, sex, age) %>%
+  mutate(index = row_number(), fem = NULL) %>%
+  filter(index <= 99) %>% #Temporary solution for addressing matching issue
+  ungroup() %>%
+  pivot_wider(id_cols = c("country", "sex", "age", "index"), 
+              names_from = "scenario", 
+              values_from = c("n_num", "n_den", "value", "sim.id"))
+```
+
+```{r}
+#Excess mortality level
+em_level <- death_rates %>%
+  filter(age %in% c("15-29", "30-44", "45-64", "65+")) %>%
+  ungroup() %>%
+  group_by(country, index, sim.id_covid, sim.id_other) %>%
+  summarize(deaths_covid = sum(n_num_covid, na.rm = T), 
+            deaths_other = sum(n_num_other, na.rm = T)) %>%
+  mutate(em_level = 100*(deaths_covid - deaths_other)/(deaths_other),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c'))
+```
+
+Calculate excess bereavement similarly by matching simulations. 
+
+```{r}
+#Calculate excess bereavement
+kin_ebr <-data$kin_bb %>%
+  filter(!is.na(scenario)) %>% 
+  mutate(sex = ifelse(grepl("f1", category), "F", "M"),
+    age = gsub("f[0-1]{1}", "", category),
+    category = NULL) %>%
+  ungroup() %>%
+  complete(age, nesting(country, scenario, sim.id, sex, kintype)) %>%
+  group_by(country, scenario, sex, age, kintype) %>%
+  mutate(index = row_number(), category = NULL) %>%
+  filter(index <= 99) %>% #Temporary solution for addressing matching issue
+  ungroup() %>%
+  pivot_wider(id_cols = c("country", "sex", "age", "kintype", "index"), 
+              names_from = "scenario", 
+              values_from = c("mean_pre_with", "sd_pre_with", "n_withkin", 
+                              "mean_post_with", "sd_post_with", "sim.id", "n_losekin", "n_total")) %>%
+  mutate(bereavement_covid = (mean_pre_with_covid - mean_post_with_covid),
+         bereavement_other = (mean_pre_with_other - mean_post_with_other),
+         n_withkin = (n_withkin_covid + n_withkin_other)/2,
+         n_losekin = (n_losekin_covid+n_losekin_other)/2,
+         n_total = (n_total_covid + n_total_other)/2,
+         pc_withkin = (n_withkin/n_total)*100,
+         pc_losekin = 100*(n_losekin/n_withkin),
+         ebr = 100*(bereavement_covid)/(bereavement_other),
+         ccode = countrycode(gsub("_", " ", country), 
+                             origin = 'country.name', destination = 'iso3c'))
+```
+
+Distribution of kin
+
+```{r}
+
+#Visualize the distribution of kin 
+kin_ebr %>%
+  ungroup() %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T)) %>%
+  filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = pc_withkin, fill = age), position = "dodge", stat = "identity") + labs(x = "Type of Kin", y = "% with at least one relative in Feb 2020", title = "% Individuals with Kin by Age", fill = "Age Group") + 
+  theme_bw() + scale_fill_viridis(discrete = T)
+
+ggsave(file = "../Output/wcc_figures/kin_dist_wcc.png")
+```
+
+Probability of Loss
+
+```{r}
+prob_loss_age <- kin_ebr %>%
+  ungroup() %>%
+  filter(pc_withkin > 1) %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin_covid = mean(n_withkin_covid, na.rm = T),
+            n_withkin_other = mean(n_withkin_other, na.rm = T),
+            n_losekin_covid = mean(n_losekin_covid, na.rm = T),
+            n_losekin_other = mean(n_losekin_other, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T)) %>%
+  mutate(probloss_covid = 100*(n_losekin_covid/n_withkin_covid),
+         probloss_other = 100*(n_losekin_other/n_withkin_other),
+         probloss_rel_diff = 100*(probloss_covid - probloss_other)/probloss_other,
+         probloss_abs_diff = probloss_covid - probloss_other)
+```
+
+```{r}
+prob_loss_age %>%
+    filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = probloss_abs_diff/100, fill = age), position = "dodge", stat = "identity") + labs(title = "Excess Probability of Losing Kin", y = "% point difference for all individuals", x = "Type of Kin", fill = "Age Group") + theme_bw() + scale_fill_viridis(discrete = T)
+
+ggsave(file = "../Output/wcc_figures/prob_loss_wcc.png")
+```
+
+Expected Excess Bereavement
+
+
+```{r}
+#Visualize the difference in expected kin
+kin_ebr %>%
+  ungroup() %>%
+  group_by(kintype, age) %>%
+  summarize(n_withkin = mean(n_withkin, na.rm = T),
+            n_losekin = mean(n_losekin, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            n_total = mean(n_total, na.rm = T),
+            bereavement_covid = mean(bereavement_covid, na.rm = T),
+            bereavement_other = mean(bereavement_other, na.rm = T),
+            bereavement_abs_diff = bereavement_covid - bereavement_other) %>%
+  filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) %>%
+  filter(pc_withkin > 1) %>%
+  ggplot() + geom_bar(aes(x = kintype, y = pc_withkin*bereavement_abs_diff/100, fill = age), position = "dodge", stat = "identity") + labs(title = "Excess Number of Kin Lost", y = "Difference for all individuals", x = "Type of Kin", fill = "Age Group") + 
+  theme_bw() + scale_fill_viridis(discrete = T)
+
+ggsave(file = "../Output/wcc_figures/kin_loss_wcc.png")
+```
+
+Combining data sources for the country level estimates
+
+```{r}
+em_country <- em_level %>%
+  group_by(country, ccode) %>%
+  summarize(em_level = mean(em_level, na.rm = T))
+
+prob_loss_country_sum <- kin_ebr %>%
+  ungroup() %>%
+  filter(pc_withkin > 1) %>%
+  group_by(ccode, country, kintype) %>%
+  summarize(n_withkin_covid = mean(n_withkin_covid, na.rm = T),
+            n_withkin_other = mean(n_withkin_other, na.rm = T),
+            n_losekin_covid = mean(n_losekin_covid, na.rm = T),
+            n_losekin_other = mean(n_losekin_other, na.rm = T),
+            pc_withkin = mean(pc_withkin, na.rm = T),
+            bereavement_covid = mean(bereavement_covid, na.rm = T),
+            bereavement_other = mean(bereavement_other, na.rm = T),
+            bereavement_abs_diff = bereavement_covid - bereavement_other) %>%
+  mutate(probloss_covid = 100*(n_losekin_covid/n_withkin_covid),
+         probloss_other = 100*(n_losekin_other/n_withkin_other),
+         probloss_rel_diff = 100*(probloss_covid - probloss_other)/probloss_other,
+         probloss_abs_diff = probloss_covid - probloss_other)
+
+em_ebr_data <- merge(em_country, prob_loss_country_sum)
+```
+
+Country level estimates
+
+```{r message=FALSE, warning=FALSE}
+filtered <- em_ebr_data %>%
+  filter(kintype %ni% c("nuclear", "spouse")) %>%
+  ungroup() %>%
+  mutate(kintype = str_to_title(if_else(kintype == "gparents", "grandparents", kintype)),
+         kintype = ordered(kintype, levels = c("Grandparents", "Parents", "Siblings", "Children"))) 
+
+require(ggrepel)
+filtered %>%
+  ggplot(aes(x = em_level, y = pc_withkin*probloss_abs_diff/100)) + geom_point() + geom_smooth(method = "lm", se = T, color = "gray47", fill = "lightgray") + facet_wrap(~kintype) + 
+  geom_text_repel(data = (. %>% filter(ccode %in% c("USA", "AUT", "DEU", "SWE", "ESP", "FRA")) %>% mutate(country = if_else(ccode == "USA", "USA", country))), aes(label = country), color = "gray47") +
+  labs(title = "Excess Mortality and Excess Kin Loss by Country", y = "Excess Probability of Losing Kin (% pt)", x = "Excess Mortality, Ages 15+ (%)") + theme_bw() + theme(text = element_text(size=12)) 
+
+ggsave(file = "../Output/wcc_figures/ebr_em_wcc.png", width = 20, height = 12, units = "cm")
+
+```
+
+
+## Adjustment factors graph
+
+```{r}
+#Generate adjustment factors
+#Calculate excess mortality rates by country over the period
+#setting parameters
+lastweek <- 24
+same_week <- T
+
+#Load STMF data
+stmf <- fread("../Data/stmf_sep8.csv", stringsAsFactors = F)
+names(stmf) <- tolower(names(stmf)) #Make names lowercase
+
+#Dropping countries that do not have data for May
+dropcountry <- stmf %>% 
+  filter(year == 2020) %>% 
+  group_by(countrycode) %>% 
+  summarize(lastweek = max(week)) %>%
+  mutate(lastmonth = trunc(lastweek/4), lastweek_trunc = lastmonth*4) %>%
+  filter(lastweek_trunc < 20) %>%
+  pull(countrycode)
+
+#Finding the last week for which we have data available for a country in 2020
+final_month_2020 <- stmf %>% 
+  filter(year == 2020) %>% 
+  group_by(countrycode) %>% 
+  summarize(lastweek = max(week)) %>%
+  mutate(lastmonth = trunc(lastweek/4), lastweek_trunc = lastmonth*4) %>%
+  filter(countrycode != dropcountry)
+
+#Pivoting the STMF data into long format
+adj.total <- stmf %>%
+  select(-c(split, splitsex, forecast)) %>% #removing variables
+  pivot_longer(-c(year, week, countrycode, sex), 
+               names_to = c("type", "age"), values_to = "rate", names_sep = 1) %>% #pivoting
+  pivot_wider(names_from = "type", values_from = "rate") %>%
+  mutate(death_count = d, #renaming and generating new versions of variables
+         death_rate = r,
+         age = gsub("85p", "85-99", gsub("_", "-", age)),
+         country = countrycode,
+         sex = if_else(sex %in% c("f"), "Female", if_else(sex %in% c("m"), "Male", "b"))) %>%
+  select(-c(d,r, countrycode)) %>%
+  filter(age != "total" & year >= 2016 & sex != "b", country != dropcountry) %>% #removing countries with data that does not extend to May
+  mutate(exposure = death_count/death_rate) %>%
+  group_by(country, sex, age, year) %>%
+  mutate(exposure2 = max(exposure, na.rm = T), #this accounts for the few cases where a weekly exposure is 0 due to no deaths in a group
+         exposure_fixed = if_else(is.na(exposure), exposure2, exposure)) %>%
+  select(-c(exposure, exposure2)) %>% #removing provisional variables
+  rename(exposure = exposure_fixed) #specifying final exposure variable
+
+#STMF currently reports the UK estimate for England and Wales and Scotland separately; we combine them into one country and use that estimate for the UK
+#Seeing if we need to adjust the UK estimate: we see if we have two countries containing the code GBR
+adjustUK <- if_else(length(grep("GBR", levels(as.factor(adj.total$country)))) > 1, T, F)
+
+#Print whether we need to adjust this
+print(paste("UK estimate being constructed from", length(grep("GBR", levels(as.factor(adj.total$country)))), "entities"))
+
+if (adjustUK <- T) {
+  #England and Wales and Scotland may go up to different number of weeks. Make sure we have the same weeks.
+  week_final_uk <-  adj.total %>% 
+    filter(grepl("GBR", country), year == 2020) %>%
+    ungroup() %>%
+    group_by(country) %>%
+    summarize(max_week = max(week))
+  
+  #Checking the final week matches
+  for (i in 1:(length(week_final_uk$max_week)-1)) {
+    same_week_uk <- (week_final_uk$max_week[i] == week_final_uk$max_week[i+1])
+  } 
+  
+  print(paste0("UK estimates have the same final week: ", same_week_uk))
+  
+  if(same_week_uk){
+    adj.total.uk <- adj.total %>% 
+      filter(grepl("GBR", country)) %>%
+      ungroup() %>%
+      group_by(year, week, sex, age) %>%
+      summarize(death_count = sum(death_count), exposure = sum(exposure)) %>% #Adding up UK estimates
+      mutate(country = "GBR") #Creating one country code
+    
+    adj.total2 <- adj.total %>% 
+      filter(!grepl("GBR", country)) %>% #Combining them with all other countries in the dataset
+      bind_rows(adj.total.uk)
+  }
+  else{ #This is just in case we have different final weeks
+    last_week_uk <- min(week_final_uk$max_week)
+    
+    adj.total.uk <- adj.total %>% 
+      filter(grepl("GBR", country), year<2020|year==2020 & week <= last_week_uk) %>%
+      ungroup() %>%
+      group_by(year, week, sex, age) %>%
+      summarize(death_count = sum(death_count), exposure = sum(exposure)) %>% #Adding up UK estimates
+      mutate(country = "GBR") #Creating one country code
+    
+    adj.total2 <- adj.total %>% 
+      filter(!grepl("GBR", country)) %>% #Combining them with all other countries in the dataset
+      bind_rows(adj.total.uk)
+  }
+}
+
+#At this point, we decide whether we would like the number of months for each country in the dataset
+#We lose a lot of data this way, but it does allow for greater comparability
+if(same_week){
+  #Convert weekly data into monthly data
+  adj.monthly <- adj.total2 %>%
+    filter(week <= lastweek) %>% #removing all data after a set cutoff point for comparability between countries
+    mutate(month = as.numeric(as.factor(cut(week, breaks = seq(1, lastweek+1, by = 4), 
+                                            right = FALSE)))) %>%
+    ungroup() %>%
+    group_by(country, year, month, sex, age) %>%
+    summarize(death_count = sum(death_count), exposure = sum(exposure)) #generating monthly death counts and exposures
+} else{ #If not we generate adjustment factors for the maximum number of months available
+  adj.monthly <- full_join(adj.total2, final_month_2020, by =c("country"= "countrycode")) %>%
+    mutate(lastweek_trunc = if_else(country == "GBR", 4*trunc(last_week_uk/4), lastweek_trunc)) %>%
+    filter(week <= lastweek_trunc) %>%
+    mutate(month = if_else(ceiling(week/4) <= 52, ceiling(week/4), 52)) %>% #Just in case we have 53 weeks
+    group_by(country, year, month, sex, age) %>%
+    summarize(death_count = sum(death_count), exposure = sum(exposure)) #generating monthly death counts and exposures
+}
+
+#Making sure this worked
+print(paste("UK estimates still need adjusting: ", if_else(length(grep("GBR", levels(as.factor(adj.monthly$country)))) > 1, T, F)))
+
+#Now that we have monthly data, we can pivot to a wider format based on period
+#For now we will calculate a four year average
+adj.monthly2 <- adj.monthly %>%
+  mutate(period = if_else(year %in% c(2016:2019), "Past", "Current"))
+
+adj.past <- adj.monthly2 %>%  #Calculate average for past 4-year period
+  filter(period == "Past") %>%
+  ungroup() %>%
+  group_by(country, month, sex, age) %>%
+  summarize(mean_past_deaths = mean(death_count), mean_past_exposure =  mean(exposure),
+            mean_past_mx = mean_past_deaths/mean_past_exposure)
+
+adj.current <- adj.monthly2 %>% filter(period == "Current") %>% #Find current mx values
+  ungroup() %>%
+  mutate(current_death_count = death_count, current_exposure = exposure,
+         current_mx = current_death_count/current_exposure) %>% 
+  select(-c(year, death_count, exposure, period))
+
+
+adj.monthly.final <- left_join(adj.past, adj.current, #Combine past and current values
+                               by = c("country" = "country", "month" = "month", "sex" = "sex", "age" = "age")) %>%
+  mutate(mx_ratio = current_mx/mean_past_mx,
+         country_name = countrycode(substr(country, 1, 3), origin = "iso3c", destination = "un.name.en"), #Using the countrycode package to find country names
+         country_name = c(gsub(" ", "_", 
+                               gsub("United Kingdom of Great Britain and Northern Ireland", #Adjusting the UK's name to match what we use later in our .opop file 
+                                    "United Kingdom", country_name))))
+
+
+#Now pick the countries we want in the graph
+#abstract_countrynames <- c("Germany", "Austria", "Sweden", #"United_States_of_America")
+
+```
+
+```{r}
+adj.monthly.final %>% 
+  filter(country_name %in% "Spain") %>%
+  mutate(country_name = gsub("_", " ", country_name),
+                  month_name = if_else(month == 1, "Jan", 
+                              if_else(month == 2, "Feb", if_else(month == 3, "Mar", if_else(month == 4, "Apr", if_else(month == 5, "May", if_else(month == 6, "Jun", NA_character_)))))),
+         month_name = ordered(month_name, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun"))) %>%
+  filter(sex %in% c("Female", "Male")) %>%
+  ggplot(aes(x = month_name, y = mx_ratio, color = age, group = interaction(age, sex))) + geom_line(aes(linetype = sex)) + labs(x = "Month in 2020", y = "Ratio of Observed to Expected Mortality Rates", color = "Age Group", linetype = "Sex", title = "Adjustment Factors for Spain") + theme_bw() + scale_color_viridis(discrete = T)
+
+ggsave(file = "../Output/wcc_figures/adjustment_factors_wcc.png")
+
+```
+
+

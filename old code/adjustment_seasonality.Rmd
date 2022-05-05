@@ -1,0 +1,244 @@
+---
+title: "Adjustment Factors for Seasonality"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r message=FALSE, warning=FALSE}
+require(tidyverse)
+require(data.table)
+require(countrycode)
+require(splitstackshape)
+
+#Create a function for the exclusion operator %ni%
+'%ni%' <- Negate('%in%')
+
+#Calculate this up to June
+final_week <- 24
+```
+
+First, we will calculate adjustment factors as in the previous code (the main change is that this time we will calculate mortality based on a 48 week year--not ideal, but necessary given the 4-week months. Is there a better fix for this?)
+
+```{r}
+#Load data and calculate weekly deaths for counterfactual and Covid cases
+stmf <- fread("../Rcode/stmf-mar9-run.csv", stringsAsFactors = F)
+names(stmf) <- tolower(names(stmf)) #Make names lowercase
+
+#Keeping countries that only have data for 2020
+keepcountry <- unique(stmf$countrycode[which(stmf$year == 2020)])
+
+#Pivoting the STMF data into long format
+adj.total <- stmf %>%
+  dplyr::select(-c(split, splitsex, forecast)) %>% #removing variables
+  filter(countrycode %in% keepcountry) %>%
+  pivot_longer(-c(year, week, countrycode, sex), 
+               names_to = c("type", "age"), values_to = "rate", names_sep = 1) %>% #pivoting
+  pivot_wider(names_from = "type", values_from = "rate") %>%
+  mutate(death_count = d, #renaming and generating new versions of variables
+         death_rate = r,
+         age = gsub("85p", "85-99", gsub("_", "-", age)),
+         country = countrycode,
+         sex = if_else(sex %in% c("f"), "Female", if_else(sex %in% c("m"), "Male", "b"))) %>%
+  filter(age != "total", between(year, 2016, 2020), sex != "b") %>%
+  mutate(exposure = death_count/death_rate) %>%
+  group_by(country, sex, age, year) %>%
+  mutate(exposure2 = max(exposure, na.rm = T), #this accounts for the few cases where a weekly exposure is 0 due to no deaths in a group
+         exposure_fixed = if_else(is.na(exposure), exposure2, exposure)) %>%
+  dplyr::select(-c(exposure, exposure2, d,r, countrycode)) %>% #removing provisional and unnecessary variables
+  rename(exposure = exposure_fixed) #specifying final exposure variable
+
+
+#STMF currently reports the UK estimate for England and Wales, Scotland, and Northern Ireland separately; we combine them into one country and use that estimate for the UK
+#Seeing if we need to adjust the UK estimate: we see if we have more than one containing the code GBR
+adjustUK <- if_else(length(grep("GBR", levels(as.factor(adj.total$country)))) > 1, T, F)
+
+#Print whether we need to adjust this
+print(paste("UK estimate being constructed from", length(grep("GBR", levels(as.factor(adj.total$country)))), "entities"))
+
+if (adjustUK <- T) {
+  #England and Wales, Scotland, and NI may go up to different number of weeks. 
+  #Make sure we have the same number of weeks for each
+  week_final_uk <-  adj.total %>% 
+    filter(grepl("GBR", country), year == 2020) %>%
+    ungroup() %>%
+    group_by(country) %>%
+    summarize(max_week = max(week), .groups = "keep") %>%
+    ungroup() %>%
+    summarize(min_week = min(max_week)) %>%
+    pull(min_week)
+  
+  #Now construct a single estimate for the UK
+  adj.total.uk <- adj.total %>% 
+    filter(grepl("GBR", country) & week <= week_final_uk) %>%
+    ungroup() %>%
+    group_by(year, week, sex, age) %>%
+    summarize(death_count = sum(death_count), exposure = sum(exposure), .groups = "keep") %>% #Adding up UK estimates
+    mutate(country = "GBR") #Creating one country code
+  
+  adj.total2 <- adj.total %>% 
+    filter(!grepl("GBR", country)) %>% #Combining them with all other countries in the dataset
+    bind_rows(adj.total.uk)
+} else {
+  adj.total2 <- adj.total
+}
+```
+
+```{r}
+#Now convert weekly data into monthly, and calculate mx values
+#Now convert weekly data into monthly data
+adj.monthly <- adj.total2 %>%
+  filter(week <= 48) %>% #removing all data after a set cutoff point for comparability between countries, this is based on a 4-week month
+  mutate(month = as.numeric(as.factor(cut(week, breaks = seq(1, 48+1, by = 4), 
+                                          right = FALSE)))) %>%
+  ungroup() %>%
+  group_by(country, year, month, sex, age) %>%
+  summarize(death_count = sum(death_count), exposure = sum(exposure), .groups = "keep") %>% #generating monthly death counts and exposures
+  mutate(period = if_else(year %in% c(2016:2019), "Past", "Current"))
+
+#Making sure this worked
+print(paste("UK estimates still need adjusting: ", if_else(length(grep("GBR", levels(as.factor(adj.monthly$country)))) > 1, T, F)))
+
+#Now we can generate mx values for the two periods
+  adj.past <- adj.monthly %>%  #Calculate average for past 4-year period
+    filter(period == "Past") %>%
+    ungroup() %>%
+    group_by(country, month, sex, age) %>%
+    summarize(mean_past_deaths = mean(death_count), mean_past_exposure =  mean(exposure),
+              mean_past_mx = mean_past_deaths/mean_past_exposure, .groups = "keep")
+  
+  adj.current <- adj.monthly %>% filter(period == "Current") %>% #Find current mx values
+    ungroup() %>%
+    mutate(current_death_count = death_count, current_exposure = exposure,
+           current_mx = current_death_count/current_exposure) %>% 
+    dplyr::select(-c(year, death_count, exposure, period))
+  
+  #Getting final monthly mx values
+  adj.monthly.final <- left_join(adj.past, adj.current, #Combine past and current values
+                                 by = c("country" = "country", "month" = "month", "sex" = "sex", "age" = "age")) %>%
+    mutate(mean_past_mx = if_else(mean_past_mx == 0, 10^-6, mean_past_mx), 
+           mx_ratio_original = current_mx/mean_past_mx) %>% #Calculate adjustment factor
+    separate(age, into = c("lower", "upper"), sep = "-", remove = F) %>% #Find upper and lower bounds of age intervals
+    mutate(upper = as.numeric(upper), 
+           lower = as.numeric(lower),
+           nrow = round((upper-lower)/5),
+           nrow = if_else(lower == 0, nrow+1, nrow), #Calculating the number of 5-year intervals contained in a given interval
+           country_name = ifelse(country == "TWN", "China Taiwan Province of China", #To match UN rates files
+                                 countrycode(substr(country, 1, 3), origin = "iso3c", destination = "un.name.en")),
+           country_name = c(gsub(" ", "_", 
+                                 gsub("United Kingdom of Great Britain and Northern Ireland",
+                                      "United Kingdom", country_name)))) %>%
+    filter(country %ni% c("TWN"))
+
+```
+
+Finally, we can calculate an annual average. Since the exposures are the same throughout, I suspect we could average the monthly deaths and then calculate a monthly mx value. Does this sound correct?
+
+```{r}
+monthly.average <- adj.monthly.final %>%
+  ungroup() %>%
+  group_by(country, sex, age) %>%
+  summarize(annual_mean_past_deaths = mean(mean_past_deaths, na.rm = T),
+            annual_exposure = mean(mean_past_exposure, na.rm = T), 
+            annual_mx = annual_mean_past_deaths/annual_exposure,
+            .groups = "keep")
+
+#Verifying that this is essential the same as calculating an average of the monthly mx values
+verify.average <- adj.monthly.final %>%
+  ungroup() %>%
+  group_by(country, sex, age) %>%
+  summarize(annual_mx_verify = mean(mean_past_mx, na.rm = T),
+            .groups = "keep")
+
+hist(100*(monthly.average$annual_mx-verify.average$annual_mx_verify)/verify.average$annual_mx_verify, main = "Percentage Difference between Strategies",
+     xlab = "Difference")
+```
+
+Now merge this back so as to calculate the monthly adjustment factors.
+
+```{r}
+factors.merged <- merge(adj.monthly.final, monthly.average) %>%
+  mutate(current_adj_factor = current_mx/annual_mx,
+         past_adj_factor = mean_past_mx/annual_mx, 
+         current_v_past = current_adj_factor/past_adj_factor)
+```
+
+Now look at this for a few cases
+
+```{r}
+factors.merged %>%
+  filter(country_name == "Spain", month %in% c(3,4,5,6)) %>%
+  ggplot() + geom_line(aes(x = month, y = current_adj_factor, 
+                           color = "Observed/Annual")) + 
+  geom_line(aes(x = month, y = past_adj_factor, 
+                           color = "Expected/Annual")) + 
+   geom_line(aes(x = month, y = mx_ratio_original, 
+                           color = "Observed/Expected")) + 
+  facet_grid(rows = vars(age), cols = vars(sex)) + 
+  labs(x = "Month", y = "Factor", title = "Spain", color = "Factor") +
+  theme_bw()
+```
+
+```{r}
+factors.merged %>%
+  filter(country_name == "Denmark", month %in% c(3,4,5,6)) %>%
+  ggplot() + geom_line(aes(x = month, y = current_adj_factor, 
+                           color = "Observed/Annual")) + 
+  geom_line(aes(x = month, y = past_adj_factor, 
+                           color = "Expected/Annual")) + 
+   geom_line(aes(x = month, y = mx_ratio_original, 
+                           color = "Observed/Expected")) + 
+  facet_grid(rows = vars(age), cols = vars(sex)) + 
+  labs(x = "Month", y = "Factor", title = "Denmark", color = "Factor") +
+  theme_bw()
+```
+
+```{r}
+factors.merged %>%
+  filter(country_name == "Sweden", month %in% c(3,4,5,6)) %>%
+  ggplot() + geom_line(aes(x = month, y = current_adj_factor, 
+                           color = "Observed/Annual")) + 
+  geom_line(aes(x = month, y = past_adj_factor, 
+                           color = "Expected/Annual")) + 
+   geom_line(aes(x = month, y = mx_ratio_original, 
+                           color = "Observed/Expected")) + 
+  facet_grid(rows = vars(age), cols = vars(sex)) + 
+  labs(x = "Month", y = "Factor", title = "Sweden", color = "Factor") +
+  theme_bw()
+```
+
+This seems to suggest that it is worth adjusting for seasonality, even if it does not seem to affect all countries in the sample equally. 
+
+Let us investigate one final thing, the extent to which the new Covid adjustment factors are higher than the counterfactual ones. The results suggest that Covid excess mortality is still reflected in our adjustment factors.
+
+```{r}
+factors.merged %>%
+  filter(country_name == "Spain", month %in% c(3,4,5,6)) %>%
+  ggplot() + geom_line(aes(x = month, y = current_v_past)) + 
+  facet_grid(rows = vars(age), cols = vars(sex)) + 
+  labs(x = "Month", y = "Covid factor/Counterfactual factor", title = "Spain") +
+  theme_bw()
+```
+
+```{r}
+factors.merged %>%
+  filter(country_name == "Denmark", month %in% c(3,4,5,6)) %>%
+  ggplot() + geom_line(aes(x = month, y = current_v_past)) + 
+  facet_grid(rows = vars(age), cols = vars(sex)) + 
+  labs(x = "Month", y = "Covid factor/Counterfactual factor", title = "Denmark") +
+  theme_bw()
+```
+
+```{r}
+factors.merged %>%
+  filter(country_name == "Sweden", month %in% c(3,4,5,6)) %>%
+  ggplot() + geom_line(aes(x = month, y = current_v_past)) + 
+  facet_grid(rows = vars(age), cols = vars(sex)) + 
+  labs(x = "Month", y = "Covid factor/Counterfactual factor", title = "Sweden") +
+  theme_bw()
+```
+
+Questions that remain: 
+
+1. Do we like this approach?
+2. How do we feel about the 48-week year and the issue with converting weeks to months? Is this an acceptable simplification, or are there better ways to do it?
