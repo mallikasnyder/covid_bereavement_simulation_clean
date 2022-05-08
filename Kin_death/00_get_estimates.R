@@ -3,7 +3,7 @@
 setwd("~/covid_bereavement_simulation_clean/")
 
 #Source functions and packages
-source("./Kin_death/01_load_functions.R")
+source("./Kin_death/load_functions.R")
 
 #Directory stems
 dir_stem <- c("covid", "other")

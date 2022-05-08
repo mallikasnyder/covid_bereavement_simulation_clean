@@ -2,7 +2,7 @@
 setwd("~/covid_bereavement_simulation_clean/")
 
 #Source functions and packages
-source("~/covid_bereavement_simulation_clean/Kin_death/01_load_functions.R")
+source("~/covid_bereavement_simulation_clean/Kin_death/load_functions.R")
 source('~/covid_bereavement_simulation_clean/Kin_death/functions_bereavement.R')
 
 #List all files in the directory
@@ -15,8 +15,6 @@ final_data <- lapply(1:length(allfiles), function(x) {
   return(output)
 })
 
-#flat_data <- do.call(c, final_data)
-#female_kin <- bind_rows(flat_data[which(names(flat_data) == "kin_bb")])
 female_kin <- bind_rows(final_data)
 
 kin_counts_female <- female_kin %>%

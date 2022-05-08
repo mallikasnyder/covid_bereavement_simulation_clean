@@ -12,7 +12,7 @@ This document contains the code for all results reported in the paper.
 ```{r message=FALSE, warning=FALSE}
 #Load functions
 #Source functions and packages
-source("~/covid_bereavement_simulation_clean/Kin_death/01_load_functions.R")
+source("~/covid_bereavement_simulation_clean/Kin_death/load_functions.R")
 source('~/covid_bereavement_simulation_clean/Kin_death/functions_bereavement.R')
 
 #Require this additional packages
@@ -31,12 +31,13 @@ require(viridis)
 options(scipen = 999999)
 
 #Load data
-data <- get(load(file = "~/covid_bereavement_simulation/Data/finaldata_monthly_v2.RData"))
+load(file = "~/covid_bereavement_simulation_clean/Data/kin_bb.RData")
+load(file = "~/covid_bereavement_simulation_clean/Data/numbers.RData")
 ```
 
 ```{r}
 #Find numbers for indices for each country in order to match simulations
-indices <- data$numbers %>%
+indices <- numbers %>%
   group_by(country) %>%
   summarize(max_index = min(nsims))
 ```
@@ -44,7 +45,7 @@ indices <- data$numbers %>%
 ```{r}
 #Burden of bereavement measures
 #Aggregated version used in paper
-kin_ebr <-data$kin_bb %>%
+kin_ebr <- kin_bb %>%
   full_join(., indices, by = c("country" = "country")) %>%
   filter(!is.na(scenario)) %>% 
   mutate(sex = ifelse(grepl("f1", category), "F", "M"),
@@ -80,7 +81,7 @@ kin_ebr <-data$kin_bb %>%
 
 ```{r}
 #Results by sex (provided for comparison)
-kin_ebr_by_sex <-data$kin_bb %>%
+kin_ebr_by_sex <-kin_bb %>%
   full_join(., indices, by = c("country" = "country")) %>%
   filter(!is.na(scenario)) %>% 
   mutate(sex = ifelse(grepl("f1", category), "F", "M"),
@@ -147,7 +148,7 @@ kinloss_compare %>%
          se = round(se)) %>%
   select(country, kintype, age, month = month_new, year, measure, estimate, se) %>%
   arrange(country, kintype, age, year, month, measure) %>%
-write_csv(file = "~/covif_bereavement_simulation_clean/Output/kin_loss_estimates_by_country.csv")
+write_csv(file = "~/covid_bereavement_simulation_clean/Output/kin_loss_estimates_by_country.csv")
 ```
 
 ```{r}
@@ -189,7 +190,7 @@ kinloss_compare_by_sex %>%
          se = round(se)) %>%
   select(country, kintype, age, sex, month = month_new, year, measure, estimate, se) %>%
   arrange(country, kintype, age, sex, year, month, measure) %>%
-write_csv(file = "~/covif_bereavement_simulation_clean/Output/kin_loss_estimates_by_country_and_sex.csv")
+write_csv(file = "~/covid_bereavement_simulation_clean/Output/kin_loss_estimates_by_country_and_sex.csv")
 ```
 
 
@@ -297,7 +298,7 @@ kinloss_compare %>%
                labels = date_format("%b")) +
   scale_y_continuous(breaks = scales::pretty_breaks(n=3))
 
-ggsave("~/covif_bereavement_simulation_clean/Output/paper_figures/compare_both.pdf",
+ggsave("~/covid_bereavement_simulation_clean/Output/paper_figures/compare_both.pdf",
        width = 17.8, units = "cm")
 
 ```
@@ -433,7 +434,7 @@ ggplot(aes(x = age, y = kinloss)) +
        legend.text = element_text(size = 8),
       legend.title = element_text(size = 8))
 
-ggsave("~/covif_bereavement_simulation_clean/Output/paper_figures/compare_magnitude.pdf",
+ggsave("~/covid_bereavement_simulation_clean/Output/paper_figures/compare_magnitude.pdf",
        width = 11.4, units = "cm")
 ```
 

@@ -17,7 +17,7 @@ gkp <- read_csv("~/covid_bereavement_simulation_clean/Output/compare.csv") %>%
   dplyr::select(c(kin, age, gkp_covid, gkp_other)) %>%
   mutate(kintype = kin, kin = NULL)
 
-socsim <- read_csv("~/covid_bereavement_simulation_clean/Data/SWE_sim_female_counts_final.csv") %>%
+socsim <- read_csv("~/covid_bereavement_simulation_clean/Output/SWE_sim_female_counts_final.csv") %>%
   dplyr::select(c(kintype, age, mean_kin_post_covid, mean_kin_post_other)) %>%
   mutate(socsim_covid = mean_kin_post_covid,
          socsim_other = mean_kin_post_other,

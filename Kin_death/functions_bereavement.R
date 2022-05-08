@@ -293,52 +293,8 @@ getKinCounts <- function(all_cat = all_cat, kin, kin.type, pid = pid,
                             feb2020 = feb2020, postcovid2020 = postcovid2020,
                             object = kin)
   
-    
-    #First object:ratios from kin (this object is not used)
-    #Size of family (nuclear and extended)
-    #Age ratio of relatives
-    #Sex ratio of relatives
-    kin_ratio <- bind_rows(lapply(all_cat, function(x) {
-      #All egos
-      ego.names <- unique(names(kin2[which(attr(kin2, "ego.agefeb2020") == unlist(strsplit(x, split = "f"))[1] &
-                                             attr(kin2, "ego.female") == unlist(strsplit(x, split = "f"))[2])]))
-    
-      #Number of kin alive in Feb 2020
-      #All kin
-      count_table <- table(factor(names(kin2[which(attr(kin2, "still.alive.feb2020") == TRUE)]), 
-                            levels = ego.names))
-      
-      #Female kin
-      kin_female <- table(factor(names(kin2[which(attr(kin2, "still.alive.feb2020") == TRUE & 
-                                                    attr(kin2, "kin.female") == 1 & 
-                                                    attr(kin2, "kin.agefeb2020") %in% c("15-29", "30-44", "45-64", "65+"))]), 
-                                                levels = ego.names))
-      #Male kin
-      kin_male <- table(factor(names(kin2[which(attr(kin2, "still.alive.feb2020") == TRUE & 
-                                                    attr(kin2, "kin.female") == 0 & 
-                                                  attr(kin2, "kin.agefeb2020") %in% c("15-29", "30-44", "45-64", "65+"))]), 
-                                 levels = ego.names))
-      #Kin above 65
-      kin_65plus <- table(factor(names(kin2[which(attr(kin2, "still.alive.feb2020") == TRUE & 
-                                                    attr(kin2, "kin.agefeb2020") %in% c("65+"))]), 
-                                 levels = ego.names))
-      
-      #Kin below 65
-      kin_below65 <- table(factor(names(kin2[which(attr(kin2, "still.alive.feb2020") == TRUE & 
-                                                     attr(kin2, "kin.agefeb2020") %in% c("15-29", "30-44", "45-64"))]), 
-                                  levels = ego.names))
-      
-      output <- list(count_all = mean(count_table, na.rm = T), sd_all = sd(count_table, na.rm = T), 
-                     count_female = mean(kin_female, na.rm = T), count_male = mean(kin_male, na.rm = T),
-                     count_65plus = mean(kin_65plus, na.rm = T), count_below65 = mean(kin_below65, na.rm = T),
-                     n_egos = length(count_table),
-                     category = x, kintype = kin.type, sim.id = sim.id, country = country, scenario = scenario)
-      
-      return(output)
-    }))
-    
   
-    #Second object: the burden of bereavement
+    #Main object: the burden of bereavement
     #Find the average number of kin before and after for those who survive: it will return a tibble
     kin_bb <- bind_rows(lapply(all_cat, function(x) {
       
@@ -384,9 +340,8 @@ getKinCounts <- function(all_cat = all_cat, kin, kin.type, pid = pid,
     
   }))
   
-    kin_both <- list(kin_ratio = kin_ratio, kin_bb = kin_bb)
     
-    return(kin_both)
+    return(kin_bb)
 }
 
 #-------Estimates function
@@ -481,13 +436,11 @@ getEstimates <- function(sim.id, country, scenario, USER,
                                                             feb2020 = feb2020, postcovid2020 = postcovid2020, 
                                                             sim.id = sim.id, country = country, scenario = scenario))
   
-  #Bind into tibbles
-  flat_data <- do.call(c, temp_data)
-  data_kin <- bind_rows(flat_data[which(names(flat_data) %in% "kin_ratio")])
-  data_bb <- bind_rows(flat_data[which(names(flat_data) %in% "kin_bb")])
+  #Bind into tibble
+  data_bb <- bind_rows(temp_data)
   
   #Add death_rates
-  data <- list(kin_ratio = data_kin, kin_bb = data_bb, 
+  data <- list(kin_bb = data_bb, 
                death_rates = death_rates)
   
   #Save intermediate output
