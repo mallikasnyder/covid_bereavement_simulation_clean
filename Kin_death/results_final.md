@@ -1,18 +1,32 @@
----
-title: "Results for Paper"
-output:
-  github_document:
-    toc: true
----
+Results for Paper
+================
 
-This document contains the code for all results reported in the paper, as well as the comparison to estimates from Hillis et al. (2021) and Verdery et al. (2020) reported in the SI Appendix. 
+-   [Data Preparation](#data-preparation)
+-   [CSV of country estimates of kin loss by
+    age](#csv-of-country-estimates-of-kin-loss-by-age)
+-   [In-text estimates](#in-text-estimates)
+-   [Figures](#figures)
+
+This document contains the code for all results reported in the paper,
+as well as the comparison to estimates from Hillis et al. (2021) and
+Verdery et al. (2020) reported in the SI Appendix.
 
 ### Data Preparation
 
-```{r message=FALSE, warning=FALSE}
+``` r
 #Load functions
 #Source functions and packages
 source("~/covid_bereavement_simulation_clean/Kin_death/load_functions.R")
+```
+
+    ## [1] "library2: tidyverse loaded."
+    ## [1] "library2: scales loaded."
+    ## [1] "library2: patchwork loaded."
+    ## [1] "library2: data.table loaded."
+    ## [1] "library2: parallel loaded."
+    ## [1] "library2: knitr loaded."
+
+``` r
 source('~/covid_bereavement_simulation_clean/Kin_death/functions_bereavement.R')
 
 #Require this additional packages
@@ -35,14 +49,14 @@ load(file = "~/covid_bereavement_simulation_clean/Data/kin_bb.RData")
 load(file = "~/covid_bereavement_simulation_clean/Data/numbers.RData")
 ```
 
-```{r}
+``` r
 #Find numbers for indices for each country in order to match simulations
 indices <- numbers %>%
   group_by(country) %>%
   summarize(max_index = min(nsims))
 ```
 
-```{r}
+``` r
 #Burden of bereavement measures
 #Aggregated version used in paper
 kin_ebr <- kin_bb %>%
@@ -79,7 +93,9 @@ kin_ebr <- kin_bb %>%
                              origin = 'country.name', destination = 'iso3c'))
 ```
 
-```{r}
+    ## `summarise()` has grouped output by 'country', 'index', 'age', 'kintype'. You can override using the `.groups` argument.
+
+``` r
 #Results by sex (provided for comparison)
 kin_ebr_by_sex <-kin_bb %>%
   full_join(., indices, by = c("country" = "country")) %>%
@@ -109,7 +125,7 @@ kin_ebr_by_sex <-kin_bb %>%
 
 ### CSV of country estimates of kin loss by age
 
-```{r}
+``` r
 #Preparing data for graphs
 kinloss_compare <- kin_ebr %>%
   filter(pc_withkin > 1, kintype != "all") %>%
@@ -138,8 +154,9 @@ kinloss_compare <- kin_ebr %>%
          date = as.Date(date))
 ```
 
+    ## `summarise()` has grouped output by 'country', 'kintype', 'age', 'measure'. You can override using the `.groups` argument.
 
-```{r}
+``` r
 #Saving estimates as CSV
 kinloss_compare %>%
   filter(month <= 18) %>%
@@ -151,7 +168,7 @@ kinloss_compare %>%
 write_csv(file = "~/covid_bereavement_simulation_clean/Output/kin_loss_estimates_by_country.csv")
 ```
 
-```{r}
+``` r
 #Estimates by sex for comparison
 kinloss_compare_by_sex <- kin_ebr_by_sex %>%
   filter(pc_withkin > 1, kintype != "all") %>%
@@ -180,8 +197,9 @@ kinloss_compare_by_sex <- kin_ebr_by_sex %>%
          date = as.Date(date))
 ```
 
+    ## `summarise()` has grouped output by 'country', 'kintype', 'age', 'sex', 'measure'. You can override using the `.groups` argument.
 
-```{r}
+``` r
 #Saving estimates by sex as CSV
 kinloss_compare_by_sex %>%
   filter(month <= 18) %>%
@@ -193,9 +211,9 @@ kinloss_compare_by_sex %>%
 write_csv(file = "~/covid_bereavement_simulation_clean/Output/kin_loss_estimates_by_country_and_sex.csv")
 ```
 
-
 ### In-text estimates
-```{r}
+
+``` r
 kinloss_compare %>%
   mutate(estimate = round(estimate),
          sd = round(sd),
@@ -205,7 +223,14 @@ kinloss_compare %>%
          age == "30-44")
 ```
 
-```{r}
+    ## # A tibble: 1 × 12
+    ## # Groups:   country, kintype, age, measure [1]
+    ##   country kintype age   measure month estimate    sd     n    se  year month_new
+    ##   <chr>   <fct>   <chr> <chr>   <dbl>    <dbl> <dbl> <int> <dbl> <dbl>     <dbl>
+    ## 1 UK      Grandp… 30-44 Baseli…     3      711   191   100    19  2020         3
+    ## # … with 1 more variable: date <date>
+
+``` r
 #Seeing how excess compares to baseline
 combined <- kinloss_compare %>%
   group_by(measure) %>%
@@ -221,7 +246,20 @@ combined %>%
   filter(kintype == "Grandparents") %>%
   arrange(-estimate_Excess) %>%
   head(5)
+```
 
+    ## # A tibble: 5 × 8
+    ## # Groups:   kintype, age, date [4]
+    ##   country  kintype      age   date       estimate_Excess estimate_Baseli… se_Excess
+    ##   <chr>    <fct>        <chr> <date>               <dbl>            <dbl>     <dbl>
+    ## 1 UK       Grandparents 30-44 2020-04-01             845              703        31
+    ## 2 Slovenia Grandparents 30-44 2020-12-01             780              572        15
+    ## 3 Spain    Grandparents 30-44 2020-04-01             761              561        23
+    ## 4 Bulgaria Grandparents 15-29 2020-11-01             733              678        32
+    ## 5 Slovenia Grandparents 30-44 2020-11-01             717              519        18
+    ## # … with 1 more variable: se_Baseline <dbl>
+
+``` r
 combined %>%
   ungroup() %>%
   group_by(kintype, age, date) %>%
@@ -230,16 +268,27 @@ combined %>%
   head(5)
 ```
 
+    ## # A tibble: 5 × 8
+    ## # Groups:   kintype, age, date [3]
+    ##   country  kintype  age   date       estimate_Excess estimate_Baseline se_Excess
+    ##   <chr>    <fct>    <chr> <date>               <dbl>             <dbl>     <dbl>
+    ## 1 Poland   Siblings 65+   2020-11-01             511               443        15
+    ## 2 Bulgaria Siblings 65+   2020-11-01             441               376        14
+    ## 3 Slovakia Siblings 65+   2021-01-01             402               568        15
+    ## 4 Slovenia Siblings 65+   2020-11-01             397               353         9
+    ## 5 Bulgaria Siblings 65+   2020-12-01             391               405        14
+    ## # … with 1 more variable: se_Baseline <dbl>
 
 ### Figures
 
-```{r}
+``` r
 #Pick a list of countries to graph results for
 country_graph <- c("Sweden", "Norway", "Poland", "UK")
 ```
 
 #### Figure 1
-```{r}
+
+``` r
 kinloss_compare %>%
   filter(country %in% country_graph,
          month <= 18) %>%
@@ -267,20 +316,27 @@ kinloss_compare %>%
   scale_x_date(breaks = c(as.Date("2020-05-01"), as.Date("2020-12-01"), as.Date("2021-06-01")), 
                labels = date_format("%b")) +
   scale_y_continuous(breaks = scales::pretty_breaks(n=3))
+```
 
+![](results_final_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
+
+``` r
 ggsave("~/covid_bereavement_simulation_clean/Output/paper_figures/compare_both.pdf",
        width = 17.8, units = "cm")
-
 ```
+
+    ## Saving 17.8 x 12.7 cm image
 
 #### Figure 2
 
-```{r}
+``` r
 #Merging in population figures
 require(wpp2019)
 ```
 
-```{r}
+    ## Loading required package: wpp2019
+
+``` r
 #Obtaining 2020 populations
 data(popM)
 data(popF)
@@ -291,7 +347,7 @@ pop_merged <- merge(popM %>% dplyr::select(c(country_code, name, age, M_2020)),
              popF %>% dplyr::select(c(country_code, name, age, F_2020)))
 ```
 
-```{r}
+``` r
 #Cleaning age groups
 pop_group <- pop_merged %>%
   pivot_longer(cols = c("M_2020", "F_2020"), 
@@ -309,7 +365,7 @@ pop_group <- pop_merged %>%
                                    "45-64", "65+")))))
 ```
 
-```{r}
+``` r
 #Calculating populations from cleaned data
 pop_final <- pop_group %>%
   group_by(country, age_group) %>%
@@ -320,7 +376,9 @@ pop_final <- pop_group %>%
   mutate(age_group = NULL)
 ```
 
-```{r}
+    ## `summarise()` has grouped output by 'country'. You can override using the `.groups` argument.
+
+``` r
 #Now merge this in with kin loss rates
 kinloss_pop <- inner_join(kinloss_compare %>% filter(measure == "Excess"), 
                           pop_final, 
@@ -329,7 +387,7 @@ kinloss_pop <- inner_join(kinloss_compare %>% filter(measure == "Excess"),
          magnitude = (estimate*pop)/100000)
 ```
 
-```{r}
+``` r
 #Appendix section: comparison to Hillis et al. (2021) and Verdery et al. (2020) estimates
 kinloss_pop %>%
   filter(country == "UK", 
@@ -338,7 +396,14 @@ kinloss_pop %>%
          month <= 16) %>%
   ungroup() %>%
   summarize(orphans_UK = round(sum(magnitude)))
+```
 
+    ## # A tibble: 1 × 1
+    ##   orphans_UK
+    ##        <dbl>
+    ## 1       7567
+
+``` r
 kinloss_pop %>%
   filter(country == "France", 
          kintype == "Parents", 
@@ -346,7 +411,14 @@ kinloss_pop %>%
          month <= 16) %>%
   ungroup() %>%
   summarize(orphans_France = round(sum(magnitude)))
+```
 
+    ## # A tibble: 1 × 1
+    ##   orphans_France
+    ##            <dbl>
+    ## 1           2298
+
+``` r
 kinloss_pop %>%
   filter(country == "USA", 
          kintype == "Parents", 
@@ -354,7 +426,14 @@ kinloss_pop %>%
          month <= 13) %>%
   ungroup() %>%
   summarize(orphans_USA_jan = round(sum(magnitude)))
+```
 
+    ## # A tibble: 1 × 1
+    ##   orphans_USA_jan
+    ##             <dbl>
+    ## 1           36716
+
+``` r
 kinloss_pop %>%
   filter(country == "Spain", 
          kintype == "Parents", 
@@ -364,7 +443,12 @@ kinloss_pop %>%
   summarize(orphans_Spain = round(sum(magnitude)))
 ```
 
-```{r}
+    ## # A tibble: 1 × 1
+    ##   orphans_Spain
+    ##           <dbl>
+    ## 1          3905
+
+``` r
 #Aggregating over the entire period
 kinloss_total <- kinloss_pop %>%
   filter(country %in% country_graph, month <= 18) %>%
@@ -373,8 +457,9 @@ kinloss_total <- kinloss_pop %>%
   summarize(kinloss = sum(magnitude, na.rm = T))
 ```
 
+    ## `summarise()` has grouped output by 'country', 'age'. You can override using the `.groups` argument.
 
-```{r}
+``` r
 #Graphing bereaved populations by country
 kinloss_total %>%
   filter(country %ni% c("Norway")) %>%
@@ -395,8 +480,13 @@ ggplot(aes(x = age, y = kinloss)) +
        legend.position = "bottom",
        legend.text = element_text(size = 8),
       legend.title = element_text(size = 8))
+```
 
+![](results_final_files/figure-gfm/unnamed-chunk-20-1.png)<!-- -->
+
+``` r
 ggsave("~/covid_bereavement_simulation_clean/Output/paper_figures/compare_magnitude.pdf",
        width = 11.4, units = "cm")
 ```
 
+    ## Saving 11.4 x 12.7 cm image

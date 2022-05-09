@@ -1,18 +1,29 @@
----
-title: "Mortality Estimates Comparison"
-output:
-  github_document:
-    toc: true
----
+Mortality Estimates Comparison
+================
 
-This document contains the code involved in comparing STMF-based estimates of excess mortality with the mortality observed in our simulations, as documented in the SI appendix. 
+-   [Data Preparation](#data-preparation)
+-   [Death rates comparison](#death-rates-comparison)
+
+This document contains the code involved in comparing STMF-based
+estimates of excess mortality with the mortality observed in our
+simulations, as documented in the SI appendix.
 
 ### Data Preparation
 
-```{r message=FALSE, warning=FALSE}
+``` r
 #Load functions
 #Source functions and packages
 source("~/covid_bereavement_simulation_clean/Kin_death/load_functions.R")
+```
+
+    ## [1] "library2: tidyverse loaded."
+    ## [1] "library2: scales loaded."
+    ## [1] "library2: patchwork loaded."
+    ## [1] "library2: data.table loaded."
+    ## [1] "library2: parallel loaded."
+    ## [1] "library2: knitr loaded."
+
+``` r
 source('~/covid_bereavement_simulation_clean/Kin_death/functions_bereavement.R')
 
 #Require this additional packages
@@ -34,15 +45,14 @@ load(file = "~/covid_bereavement_simulation_clean/Data/death_data.RData")
 load(file = "~/covid_bereavement_simulation_clean/Data/numbers.RData")
 ```
 
-
-```{r}
+``` r
 #Find numbers for indices for each country in order to match simulations
 indices <- numbers %>%
   group_by(country) %>%
   summarize(max_index = min(nsims))
 ```
 
-```{r}
+``` r
 #Find mid-period population sizes
 pop_sizes <- death_rates %>%
   filter(age %ni% c("all_sum", "all_mid")) %>%
@@ -51,14 +61,27 @@ pop_sizes <- death_rates %>%
   ungroup() %>%
   group_by(country, scenario) %>%
   summarize(pop_sim = mean(pop_sim))
+```
 
+    ## `summarise()` has grouped output by 'country', 'sim.id'. You can override using the `.groups` argument.
+
+    ## `summarise()` has grouped output by 'country'. You can override using the `.groups` argument.
+
+``` r
 max(pop_sizes$pop_sim)
+```
+
+    ## [1] 120625.5
+
+``` r
 min(pop_sizes$pop_sim)
 ```
 
+    ## [1] 12601.78
 
 ### Death rates comparison
-```{r}
+
+``` r
 #Death rates object
   em <- death_rates %>%
   full_join(., indices, by = c("country" = "country")) %>%
@@ -87,7 +110,9 @@ min(pop_sizes$pop_sim)
            mx_ratio_sim = if_else(mx_ratio_sim == Inf, NaN, mx_ratio_sim))
 ```
 
-```{r}
+    ## `summarise()` has grouped output by 'index', 'country', 'sim.id_covid', 'sim.id_other'. You can override using the `.groups` argument.
+
+``` r
 #Load data and calculate weekly deaths for counterfactual and Covid cases
 stmf <- fread("~/covid_bereavement_simulation_clean/Input/stmf_sep28.csv", stringsAsFactors = F)
 names(stmf) <- tolower(names(stmf)) #Make names lowercase
@@ -127,7 +152,11 @@ adjustUK <- if_else(length(grep("GBR", levels(as.factor(adj.total$country)))) > 
 #Print whether we need to adjust this
 print(paste("UK estimate being constructed from", 
             length(grep("GBR", levels(as.factor(adj.total$country)))), "entities"))
+```
 
+    ## [1] "UK estimate being constructed from 3 entities"
+
+``` r
 if (adjustUK <- T) {
   
   #Now construct a single estimate for the UK
@@ -171,11 +200,19 @@ adj.monthly <- adj.monthly.pre %>%
             exposure = sum(exposure_daily)) %>% 
   #generating monthly death counts and exposures
   mutate(period = if_else(year %in% c(2016:2019), "Past", "Current"))
+```
 
+    ## `summarise()` has grouped output by 'country', 'year', 'month', 'sex'. You can override using the `.groups` argument.
+
+``` r
 #Making sure this worked
 print(paste("UK estimates still need adjusting: ", 
             if_else(length(grep("GBR", levels(as.factor(adj.monthly$country)))) > 1, T, F)))
+```
 
+    ## [1] "UK estimates still need adjusting:  FALSE"
+
+``` r
 #Now we can generate mx values for the two periods
 adj.past <- adj.monthly %>%  #Calculate average for past 4-year period
   filter(period == "Past") %>%
@@ -198,7 +235,11 @@ adj.past <- bind_rows(adj.past, adj.extra) %>%
   summarize(past_deaths = sum(mean_past_deaths),
             past_exposure = sum(mean_past_exposure),
             past_mx = past_deaths/past_exposure)
+```
 
+    ## `summarise()` has grouped output by 'country'. You can override using the `.groups` argument.
+
+``` r
 adj.current <- adj.monthly %>% filter(period == "Current") %>% #Find current mx values
   ungroup() %>%
   mutate(current_death_count = death_count, 
@@ -210,7 +251,11 @@ adj.current <- adj.monthly %>% filter(period == "Current") %>% #Find current mx 
   summarize(current_deaths = sum(current_death_count),
             current_exposure = sum(current_exposure),
             current_mx = current_deaths/current_exposure)
+```
 
+    ## `summarise()` has grouped output by 'country'. You can override using the `.groups` argument.
+
+``` r
 #Getting final monthly mx values
 adj.monthly.final <- right_join(adj.past, adj.current, #Combine past and current values
                                by = c("country" = "country", "age" = "age")) %>%
@@ -226,7 +271,7 @@ adj.monthly.final <- right_join(adj.past, adj.current, #Combine past and current
   filter(country %ni% c("TWN"))
 ```
 
-```{r}
+``` r
 em.model <- em %>%
   group_by(country, age_interval) %>%
   summarize(estimate = mean(mx_ratio_sim, na.rm = T),
@@ -235,7 +280,11 @@ em.model <- em %>%
             std.error = sd/sqrt(n),
             upperci = estimate + qnorm(0.975)*std.error,
             lowerci = estimate - qnorm(0.975)*std.error)
+```
 
+    ## `summarise()` has grouped output by 'country'. You can override using the `.groups` argument.
+
+``` r
 em.model.both <- full_join(em.model, 
                            adj.monthly.final, 
                            by = c("country" = "country_name", "age_interval"= "age")) %>%
@@ -252,7 +301,7 @@ country.reorder.em <- em.model.both %>%
   pull(country)
 ```
 
-```{r, fig.height = 6}
+``` r
 #Means by age
 em.model.both %>%
   ggplot(aes(x = factor(country, levels = country.reorder.em), 
@@ -270,7 +319,9 @@ em.model.both %>%
   theme_bw()
 ```
 
-```{r}
+![](mortality_comparison_appendix_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
+
+``` r
 country_vals <- em.model.both %>%
     filter(age_interval == "65+") %>%
   select(country, estimate, mx_ratio_stmf, diff)
@@ -279,11 +330,44 @@ country_vals <- em.model.both %>%
 
 cor.test(em.model.both$estimate[em.model.both$age_interval == "65+"], 
     em.model.both$mx_ratio_stmf[em.model.both$age_interval == "65+"])
+```
 
+    ## 
+    ##  Pearson's product-moment correlation
+    ## 
+    ## data:  em.model.both$estimate[em.model.both$age_interval == "65+"] and em.model.both$mx_ratio_stmf[em.model.both$age_interval == "65+"]
+    ## t = 29.774, df = 29, p-value < 0.00000000000000022
+    ## alternative hypothesis: true correlation is not equal to 0
+    ## 95 percent confidence interval:
+    ##  0.9667998 0.9923564
+    ## sample estimates:
+    ##       cor 
+    ## 0.9840337
+
+``` r
 #Show countries
 country_vals %>%
   arrange(-abs(diff)) 
+```
 
+    ## # A tibble: 31 × 4
+    ## # Groups:   country [31]
+    ##    country           estimate mx_ratio_stmf    diff
+    ##    <chr>                <dbl>         <dbl>   <dbl>
+    ##  1 Slovenia             1.17          1.14   0.0343
+    ##  2 Slovakia             1.22          1.18   0.0326
+    ##  3 Poland               1.24          1.21   0.0318
+    ##  4 Luxembourg           1.07          1.04   0.0305
+    ##  5 Republic of Korea    0.912         0.940 -0.0294
+    ##  6 Iceland              0.921         0.899  0.0251
+    ##  7 Denmark              0.960         0.984 -0.0243
+    ##  8 Czech Republic       1.24          1.21   0.0204
+    ##  9 Israel               1.05          1.03   0.0167
+    ## 10 Greece               1.05          1.07  -0.0164
+    ## # … with 21 more rows
+
+``` r
 paste0(country_vals$country, collapse = ", ")
 ```
 
+    ## [1] "Austria, Belgium, Bulgaria, Chile, Croatia, Czech Republic, Denmark, Estonia, Finland, France, Germany, Greece, Hungary, Iceland, Israel, Latvia, Lithuania, Luxembourg, Netherlands, New Zealand, Norway, Poland, Portugal, Republic of Korea, Slovakia, Slovenia, Spain, Sweden, Switzerland, United Kingdom, USA"

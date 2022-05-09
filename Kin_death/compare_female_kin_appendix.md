@@ -1,37 +1,63 @@
----
-title: "Comparison of Female Kin Counts for Sweden (SI Appendix)"
-output:
-    github_document:
-    toc: true
----
+Comparison of Female Kin Counts for Sweden (SI Appendix)
+================
 
-This document contains the analysis code for comparing kin counts for July 2020 derived using formal methods with those derived from our microsimulations. 
+This document contains the analysis code for comparing kin counts for
+July 2020 derived using formal methods with those derived from our
+microsimulations.
 
-```{r, message = FALSE, warning = FALSE}
+``` r
 require(tidyverse) #Loading dependencies
 ```
 
-```{r}
+``` r
 #Load and merge data
 gkp <- read_csv("~/covid_bereavement_simulation_clean/Output/compare.csv") %>%
   dplyr::select(c(kin, age, gkp_covid, gkp_other)) %>%
   mutate(kintype = kin, kin = NULL)
+```
 
+    ## New names:
+    ## * `` -> ...1
+
+    ## Rows: 20 Columns: 9
+
+    ## ── Column specification ────────────────────────────────────────────────────────
+    ## Delimiter: ","
+    ## chr (2): kin, age
+    ## dbl (7): ...1, socsim_other, socsim_covid, gkp_covid, gkp_other, rel_diff_so...
+
+    ## 
+    ## ℹ Use `spec()` to retrieve the full column specification for this data.
+    ## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+
+``` r
 socsim <- read_csv("~/covid_bereavement_simulation_clean/Output/SWE_sim_female_counts_final.csv") %>%
   dplyr::select(c(kintype, age, mean_kin_post_covid, mean_kin_post_other)) %>%
   mutate(socsim_covid = mean_kin_post_covid,
          socsim_other = mean_kin_post_other,
          mean_kin_post_covid = NULL,
          mean_kin_post_other = NULL)
+```
 
+    ## Rows: 20 Columns: 18
+
+    ## ── Column specification ────────────────────────────────────────────────────────
+    ## Delimiter: ","
+    ## chr  (2): kintype, age
+    ## dbl (16): mean_kin_pre_covid, mean_kin_pre_other, mean_kin_post_covid, mean_...
+
+    ## 
+    ## ℹ Use `spec()` to retrieve the full column specification for this data.
+    ## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+
+``` r
 compare <- merge(gkp, socsim)
 
 compare$diff_covid = compare$socsim_covid - compare$gkp_covid
 compare$diff_other = compare$socsim_other - compare$gkp_other
-```  
+```
 
-
-```{r}
+``` r
 #Plot differences
 compare %>%
   filter(kintype != "ggmothers") %>%
@@ -61,4 +87,6 @@ compare %>%
   theme_bw()
 ```
 
+    ## Warning: Using alpha for a discrete variable is not advised.
 
+![](compare_female_kin_appendix_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->
